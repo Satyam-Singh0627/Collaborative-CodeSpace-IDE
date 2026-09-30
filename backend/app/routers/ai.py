@@ -1,11 +1,20 @@
 import httpx
 import logging
 from typing import Optional, List
-from fastapi import APIRouter, Depends
-from ..models import User
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from ..models import User, Room, ProjectFile
 from ..auth import get_current_user
+from ..database import get_db, SessionLocal
 from ..config import AI_API_KEY, AI_MODEL, AI_PROVIDER
-from ..schemas import AIRequest, AIResponse, AICompletionRequest, AICompletionResponse, AIChatMessage
+from ..schemas import (
+    AIRequest, AIResponse, AICompletionRequest, AICompletionResponse,
+    AIChatMessage, AIAgentRequest, AIAgentResponse, AIAgentStep, AIToolCall,
+)
+from ..services.ai_agent import (
+    build_agent_system_prompt, parse_agent_response, execute_agent_tools,
+)
 
 logger = logging.getLogger("ai")
 router = APIRouter(prefix="/api/ai", tags=["AI Assistant"])
@@ -269,3 +278,139 @@ async def ai_complete(req: AICompletionRequest, current_user: User = Depends(get
         return AICompletionResponse(completion=clean.rstrip(), model_used=used_model or AI_MODEL or "llm")
 
     return AICompletionResponse(completion="", model_used="none")
+
+
+@router.post("/agent", response_model=AIAgentResponse)
+async def ai_agent_endpoint(
+    req: AIAgentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """AI Agent endpoint — can operate on workspace files via tool calls."""
+    if not AI_API_KEY or not AI_API_KEY.strip():
+        return AIAgentResponse(
+            steps=[],
+            final_response=(
+                "⚠️ **AI service is not configured.**\n\n"
+                "Add `GEMINI_API_KEY` or `OPENROUTER_API_KEY` to backend `.env` to enable AI agent."
+            ),
+            model_used="unconfigured",
+            files_modified=[],
+        )
+
+    code_normalized = req.room_code.upper().strip()
+    room = db.query(Room).filter(Room.room_code == code_normalized).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    # Get current file list
+    files = db.query(ProjectFile).filter(ProjectFile.room_id == room.id).all()
+    file_names = [f.name for f in files]
+
+    # Build agent system prompt
+    sys_prompt = build_agent_system_prompt(file_names)
+
+    # Build user prompt with context
+    user_parts = [f"User request: {req.prompt}"]
+    if req.active_file:
+        active = next((f for f in files if f.name == req.active_file), None)
+        if active:
+            user_parts.append(f"\nActive file: {active.name}\n```{active.language}\n{active.content}\n```")
+
+    if req.chat_history:
+        user_parts.append("\nPrevious conversation:")
+        for msg in req.chat_history[-4:]:
+            speaker = "User" if msg.role == "user" else "AI"
+            user_parts.append(f"{speaker}: {msg.content}")
+
+    user_prompt = "\n".join(user_parts)
+
+    # Helper to execute code via the execution provider
+    async def run_code_fn(language: str, filename: str, content: str) -> dict:
+        from .execution import local_provider, piston_provider, judge0_provider, _normalise, _can_run_locally, LANGUAGE_REGISTRY
+        lang_key = _normalise(language)
+        if lang_key not in LANGUAGE_REGISTRY:
+            return {"status": "error", "output": f"Language '{language}' not supported."}
+        files_payload = [{"name": filename, "content": content}]
+        if _can_run_locally(lang_key):
+            result = await local_provider.execute(lang_key, files_payload, filename, "")
+        else:
+            result = await judge0_provider.execute(lang_key, files_payload, filename, "")
+        return {"status": result.status, "output": result.output}
+
+    all_steps = []
+    all_files_modified = []
+    max_iterations = 3  # Prevent infinite loops
+
+    for iteration in range(max_iterations):
+        # Call AI
+        text, used_model = await _call_ai_service(
+            sys_prompt, user_prompt,
+            max_tokens=4000, temperature=0.3
+        )
+
+        if not text:
+            return AIAgentResponse(
+                steps=all_steps,
+                final_response="⚠️ AI service did not return a response.",
+                model_used="service-unavailable",
+                files_modified=all_files_modified,
+            )
+
+        # Parse response
+        parsed = parse_agent_response(text)
+        tool_calls_raw = parsed.get("tool_calls", [])
+
+        if not tool_calls_raw:
+            # No tool calls — just a chat response
+            step = AIAgentStep(
+                thought=parsed.get("thoughts", ""),
+                tool_calls=[],
+                response=parsed.get("response", text),
+            )
+            all_steps.append(step)
+            break
+
+        # Execute tools
+        results, modified = await execute_agent_tools(
+            parsed, room.id, code_normalized, current_user.id,
+            execution_fn=run_code_fn,
+        )
+        all_files_modified.extend(modified)
+
+        step = AIAgentStep(
+            thought=parsed.get("thoughts", ""),
+            tool_calls=[
+                AIToolCall(tool=r["tool"], args=r["args"], result=r["result"])
+                for r in results
+            ],
+            response=parsed.get("response", ""),
+        )
+        all_steps.append(step)
+
+        # If we have a final response, we're done
+        if parsed.get("response") and parsed["response"].strip():
+            break
+
+        # Otherwise, build follow-up prompt with tool results
+        results_text = "\n".join(
+            f"Tool {r['tool']}({r['args']}): {r['result']}" for r in results
+        )
+        user_prompt = f"Tool execution results:\n{results_text}\n\nProvide your final response to the user based on these results."
+
+    final_response = ""
+    if all_steps:
+        final_response = all_steps[-1].response or ""
+        if not final_response:
+            # Fallback: concatenate tool results
+            for step in all_steps:
+                for tc in step.tool_calls:
+                    if tc.result:
+                        final_response += tc.result + "\n"
+
+    return AIAgentResponse(
+        steps=all_steps,
+        final_response=final_response.strip() or "Agent completed with no response.",
+        model_used=used_model or AI_MODEL or "llm",
+        files_modified=list(set(all_files_modified)),
+    )

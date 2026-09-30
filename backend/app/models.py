@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Boolean, Index
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -39,6 +39,7 @@ class Room(Base):
     files = relationship("ProjectFile", back_populates="room", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="room", cascade="all, delete-orphan")
     execution_logs = relationship("ExecutionLog", back_populates="room", cascade="all, delete-orphan")
+    ai_conversations = relationship("AIConversation", back_populates="room", cascade="all, delete-orphan")
 
 class RoomMember(Base):
     __tablename__ = "room_members"
@@ -58,10 +59,21 @@ class ProjectFile(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     room_id = Column(String(36), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False)
-    name = Column(String(255), nullable=False) # e.g. "main.py"
+    parent_path = Column(String(500), default="", nullable=False)  # e.g. "src/utils"
+    name = Column(String(255), nullable=False) # e.g. "main.py" or "src/utils/helpers.py"
     language = Column(String(50), default="python")
     content = Column(Text, default="")
+    version = Column(Integer, default=1, nullable=False)
+    is_binary = Column(Boolean, default=False, nullable=False)
+    storage_ref = Column(String(500), nullable=True)  # For binary files: external storage path
+    created_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (
+        Index("ix_files_room_name", "room_id", "name", unique=True),
+    )
 
     # Relationships
     room = relationship("Room", back_populates="files")
@@ -92,3 +104,33 @@ class ExecutionLog(Base):
 
     # Relationships
     room = relationship("Room", back_populates="execution_logs")
+
+class AIConversation(Base):
+    __tablename__ = "ai_conversations"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    room_id = Column(String(36), ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(255), default="AI Chat")
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    room = relationship("Room", back_populates="ai_conversations")
+    messages = relationship("AIMessage", back_populates="conversation", cascade="all, delete-orphan",
+                            order_by="AIMessage.created_at")
+
+class AIMessage(Base):
+    __tablename__ = "ai_messages"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    conversation_id = Column(String(36), ForeignKey("ai_conversations.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(20), nullable=False)  # "user", "assistant", "tool"
+    content = Column(Text, nullable=False)
+    action = Column(String(50), nullable=True)  # "explain", "bug_detect", "chat", "agent", etc.
+    model_used = Column(String(100), nullable=True)
+    tool_calls = Column(Text, nullable=True)  # JSON serialized tool calls
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+
+    # Relationships
+    conversation = relationship("AIConversation", back_populates="messages")

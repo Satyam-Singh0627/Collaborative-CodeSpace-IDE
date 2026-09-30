@@ -29,7 +29,6 @@ class TokenResponse(BaseModel):
 # Room Schemas
 class RoomCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
-    language: Optional[str] = "python"
     description: Optional[str] = None
 
 class RoomMemberResponse(BaseModel):
@@ -57,13 +56,14 @@ class RoomJoin(BaseModel):
 # File Schemas
 class FileCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    language: Optional[str] = "python"
+    language: Optional[str] = None  # Auto-detected from extension if None
     content: Optional[str] = ""
 
 class FileUpdate(BaseModel):
     name: Optional[str] = None
     language: Optional[str] = None
     content: Optional[str] = None
+    version: Optional[int] = None  # For optimistic concurrency — client sends its version
 
 class FileResponse(BaseModel):
     id: str
@@ -71,6 +71,7 @@ class FileResponse(BaseModel):
     name: str
     language: str
     content: str
+    version: int
     updated_at: datetime
 
     class Config:
@@ -138,3 +139,25 @@ class AICompletionResponse(BaseModel):
     completion: str
     model_used: str
 
+# AI Agent Schemas (tool-use / agentic mode)
+class AIAgentRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=5000)
+    room_code: str = Field(..., min_length=4, max_length=20)
+    active_file: Optional[str] = None
+    chat_history: Optional[List[AIChatMessage]] = None
+
+class AIToolCall(BaseModel):
+    tool: str
+    args: dict
+    result: Optional[str] = None
+
+class AIAgentStep(BaseModel):
+    thought: Optional[str] = None
+    tool_calls: List[AIToolCall] = []
+    response: Optional[str] = None
+
+class AIAgentResponse(BaseModel):
+    steps: List[AIAgentStep]
+    final_response: str
+    model_used: str
+    files_modified: List[str] = []

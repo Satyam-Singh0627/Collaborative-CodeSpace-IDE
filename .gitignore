@@ -5,6 +5,7 @@
 *.pem
 *.key
 *.cert
+*Documentation*.md
 
 # Python
 __pycache__/

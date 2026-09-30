@@ -181,11 +181,23 @@ export const api = {
     language = 'python',
     prompt = '',
     errorOutput = '',
+    fileName = '',
+    projectFiles: string[] = [],
+    chatHistory: { role: string; content: string }[] = [],
   ): Promise<{ action: string; result: string; model_used: string }> {
     const res = await fetch(`${API_BASE}/ai`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ action, code, language, prompt, error_output: errorOutput }),
+      body: JSON.stringify({
+        action,
+        code,
+        language,
+        prompt,
+        error_output: errorOutput,
+        file_name: fileName || undefined,
+        project_files: projectFiles.length > 0 ? projectFiles : undefined,
+        chat_history: chatHistory.length > 0 ? chatHistory : undefined,
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

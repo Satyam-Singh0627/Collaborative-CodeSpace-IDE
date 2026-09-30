@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Copy, Check, Play, Phone, PhoneOff, 
-  ArrowLeft, RefreshCw, Radio, Code2
+  ArrowLeft, RefreshCw, Radio, Code2, Save
 } from 'lucide-react';
 import type { Room, ProjectFile, ChatMessage, OnlineUser, CursorPosition, ExecutionResult } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -16,43 +16,31 @@ import { ChatPanel } from './ChatPanel';
 import { AIAssistantPanel } from './AIAssistantPanel';
 import { VideoCallPanel } from './VideoCallPanel';
 import { OutputPanel } from './OutputPanel';
+import { SUPPORTED_LANGUAGES, getLanguageFromFileName } from '../utils/languages';
+import { openLocalFile, openLocalFolder, saveLocalFile } from '../utils/fileSystem';
 
 interface WorkspaceProps {
   roomCode: string;
   onLeaveRoom: () => void;
 }
 
-const SUPPORTED_LANGUAGES = [
-  { key: 'python', label: 'Python' },
-  { key: 'javascript', label: 'JavaScript' },
-  { key: 'typescript', label: 'TypeScript' },
-  { key: 'c', label: 'C' },
-  { key: 'cpp', label: 'C++' },
-  { key: 'java', label: 'Java' },
-  { key: 'go', label: 'Go' },
-  { key: 'rust', label: 'Rust' },
-  { key: 'php', label: 'PHP' },
-  { key: 'ruby', label: 'Ruby' },
-  { key: 'csharp', label: 'C#' },
-  { key: 'kotlin', label: 'Kotlin' },
-  { key: 'bash', label: 'Bash' },
-];
-
 export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) => {
   const { user, token } = useAuth();
   const [room, setRoom] = useState<Room | null>(null);
   const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [openTabs, setOpenTabs] = useState<ProjectFile[]>([]);
   const [activeFile, setActiveFile] = useState<ProjectFile | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [remoteCursors, setRemoteCursors] = useState<CursorPosition[]>([]);
   const [selectedText, setSelectedText] = useState('');
   const [lastError, setLastError] = useState('');
+  const [stdin, setStdin] = useState('');
   
   // Connection & UI states
   const [connStatus, setConnStatus] = useState<ConnectionStatus>('connecting');
   const [copiedCode, setCopiedCode] = useState(false);
-  const [activeRightTab, setActiveRightTab] = useState<'chat' | 'ai'>('chat');
+  const [activeRightTab, setActiveRightTab] = useState<'chat' | 'ai'>('ai');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,42 +63,33 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
   const webrtcRef = useRef<WebRTCService | null>(null);
 
   // 1. Initial Load: Fetch room, files, messages
-  useEffect(() => {
-    let isMounted = true;
-    const loadInitialData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [roomData, filesData, messagesData] = await Promise.all([
-          api.getRoom(roomCode),
-          api.getFiles(roomCode),
-          api.getMessages(roomCode),
-        ]);
+  const loadInitialData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [roomData, filesData, messagesData] = await Promise.all([
+        api.getRoom(roomCode),
+        api.getFiles(roomCode),
+        api.getMessages(roomCode),
+      ]);
 
-        if (isMounted) {
-          setRoom(roomData);
-          setFiles(filesData);
-          if (filesData.length > 0) {
-            setActiveFile(filesData[0]);
-          }
-          setMessages(messagesData);
-        }
-      } catch (err: unknown) {
-        if (isMounted) {
-          setError(err instanceof Error ? err.message : 'Failed to load workspace.');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+      setRoom(roomData);
+      setFiles(filesData);
+      if (filesData.length > 0) {
+        setActiveFile(filesData[0]);
+        setOpenTabs([filesData[0]]);
       }
-    };
-
-    loadInitialData();
-    return () => {
-      isMounted = false;
-    };
+      setMessages(messagesData);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load workspace.');
+    } finally {
+      setLoading(false);
+    }
   }, [roomCode]);
+
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
 
   // 2. Initialize WebSocket & WebRTC
   useEffect(() => {
@@ -125,6 +104,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       },
       onCodeChange: (data) => {
         setFiles((prev) =>
+          prev.map((f) => (f.id === data.file_id ? { ...f, content: data.content } : f))
+        );
+        setOpenTabs((prev) =>
           prev.map((f) => (f.id === data.file_id ? { ...f, content: data.content } : f))
         );
         setActiveFile((prev) => (prev && prev.id === data.file_id ? { ...prev, content: data.content } : prev));
@@ -171,7 +153,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
     const rtc = new WebRTCService(
       ws,
       user.id,
-      user.name,
+      user.name || 'Developer',
       (streams) => {
         setRemoteStreams(streams);
       }
@@ -186,18 +168,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
     };
   }, [roomCode, token, user, loading]);
 
-  // Code Execution Handler — sends ALL project files for multi-file support
+  // Code Execution Handler — sends all project files for multi-file project support
   const handleRunCode = async () => {
     if (!activeFile) return;
     setIsRunning(true);
-    setExecResult({ status: 'running', output: 'Executing in sandbox environment...' });
+    setExecResult({ status: 'running', output: 'Compiling and executing in sandbox environment...' });
 
     try {
       const projectFiles = files
-        .filter((f) => !f.name.endsWith('.md')) // skip non-code markdown files
+        .filter((f) => !f.name.endsWith('.md'))
         .map((f) => ({ name: f.name, content: f.content }));
 
-      // If active file is not in code list (e.g. if single file), include it
       if (!projectFiles.some((f) => f.name === activeFile.name)) {
         projectFiles.unshift({ name: activeFile.name, content: activeFile.content });
       }
@@ -206,9 +187,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
         activeFile.language,
         projectFiles,
         activeFile.name,
+        stdin,
       );
       setExecResult(res);
-      setLastError(res.status === 'error' ? res.output : '');
+      setLastError(res.status === 'error' || res.status === 'compile_error' ? res.output : '');
       wsRef.current?.sendExecutionBroadcast(res.output, res.status);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Execution failed.';
@@ -219,7 +201,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
     }
   };
 
-  // 3. Keyboard shortcuts (Ctrl/Cmd + Enter)
+  // Keyboard shortcut: Ctrl/Cmd + Enter to Run
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -231,16 +213,60 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isRunning, activeFile, files]);
+  }, [isRunning, activeFile, files, stdin]);
+
+  // Select a file & open tab
+  const handleSelectFile = (file: ProjectFile) => {
+    setActiveFile(file);
+    setOpenTabs((prev) => {
+      if (!prev.some((f) => f.id === file.id)) {
+        return [...prev, file];
+      }
+      return prev;
+    });
+  };
+
+  // Close an open tab
+  const handleCloseTab = (fileId: string) => {
+    setOpenTabs((prev) => {
+      const remaining = prev.filter((f) => f.id !== fileId);
+      if (activeFile?.id === fileId && remaining.length > 0) {
+        setActiveFile(remaining[remaining.length - 1]);
+      } else if (remaining.length === 0) {
+        setActiveFile(null);
+      }
+      return remaining;
+    });
+  };
 
   // Code Change Handler
   const handleCodeChange = useCallback((fileId: string, content: string) => {
     setFiles((prev) =>
-      prev.map((f) => (f.id === fileId ? { ...f, content } : f))
+      prev.map((f) => (f.id === fileId ? { ...f, content, unsaved: true } : f))
     );
-    setActiveFile((prev) => (prev && prev.id === fileId ? { ...prev, content } : prev));
+    setOpenTabs((prev) =>
+      prev.map((f) => (f.id === fileId ? { ...f, content, unsaved: true } : f))
+    );
+    setActiveFile((prev) => (prev && prev.id === fileId ? { ...prev, content, unsaved: true } : prev));
     wsRef.current?.sendCodeChange(fileId, content);
   }, []);
+
+  // Save active file
+  const handleSaveFile = async (file: ProjectFile) => {
+    if (file.isLocal) {
+      await saveLocalFile(file as any);
+    } else {
+      await api.updateFile(roomCode, file.id, { content: file.content });
+    }
+
+    setFiles((prev) =>
+      prev.map((f) => (f.id === file.id ? { ...f, unsaved: false } : f))
+    );
+    setOpenTabs((prev) =>
+      prev.map((f) => (f.id === file.id ? { ...f, unsaved: false } : f))
+    );
+    setActiveFile((prev) => (prev && prev.id === file.id ? { ...prev, unsaved: false } : prev));
+  };
 
   // Cursor Move Handler
   const handleCursorMove = useCallback((fileId: string, cursor: { lineNumber: number; column: number }) => {
@@ -254,15 +280,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
 
   // File Operations
   const handleCreateFile = async (name: string, language: string) => {
-    const newFile = await api.createFile(roomCode, name, language, '');
+    const lang = language || getLanguageFromFileName(name);
+    const newFile = await api.createFile(roomCode, name, lang, '');
     setFiles((prev) => [...prev, newFile]);
-    setActiveFile(newFile);
+    handleSelectFile(newFile);
     wsRef.current?.sendFileEvent('file_created', newFile);
   };
 
   const handleRenameFile = async (fileId: string, newName: string) => {
-    const updated = await api.updateFile(roomCode, fileId, { name: newName });
+    const lang = getLanguageFromFileName(newName);
+    const updated = await api.updateFile(roomCode, fileId, { name: newName, language: lang });
     setFiles((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
+    setOpenTabs((prev) => prev.map((f) => (f.id === fileId ? updated : f)));
     if (activeFile?.id === fileId) setActiveFile(updated);
     wsRef.current?.sendFileEvent('file_renamed', updated);
   };
@@ -276,6 +305,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       }
       return remaining;
     });
+    handleCloseTab(fileId);
     wsRef.current?.sendFileEvent('file_deleted', { fileId });
   };
 
@@ -283,7 +313,62 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
     if (!activeFile) return;
     const updated = await api.updateFile(roomCode, activeFile.id, { language: newLang });
     setFiles((prev) => prev.map((f) => (f.id === activeFile.id ? updated : f)));
+    setOpenTabs((prev) => prev.map((f) => (f.id === activeFile.id ? updated : f)));
     setActiveFile(updated);
+  };
+
+  // Local File System Access API Integrations
+  const handleOpenLocalFile = async () => {
+    const localEntry = await openLocalFile();
+    if (!localEntry) return;
+
+    // Check if file already exists in files list
+    const existing = files.find((f) => f.name === localEntry.name);
+    if (existing) {
+      handleSelectFile(existing);
+      return;
+    }
+
+    try {
+      const created = await api.createFile(roomCode, localEntry.name, localEntry.language, localEntry.content);
+      const enhanced: ProjectFile = {
+        ...created,
+        isLocal: true,
+        fileHandle: localEntry.handle,
+      };
+      setFiles((prev) => [...prev, enhanced]);
+      handleSelectFile(enhanced);
+    } catch {
+      // Offline fallback
+      const offlineFile: ProjectFile = {
+        id: localEntry.id,
+        room_id: roomCode,
+        name: localEntry.name,
+        language: localEntry.language,
+        content: localEntry.content,
+        updated_at: new Date().toISOString(),
+        isLocal: true,
+        fileHandle: localEntry.handle,
+      };
+      setFiles((prev) => [...prev, offlineFile]);
+      handleSelectFile(offlineFile);
+    }
+  };
+
+  const handleOpenLocalFolder = async () => {
+    const result = await openLocalFolder();
+    if (!result || result.files.length === 0) return;
+
+    for (const f of result.files) {
+      try {
+        await api.createFile(roomCode, f.name, f.language, f.content);
+      } catch {}
+    }
+    const refreshed = await api.getFiles(roomCode);
+    setFiles(refreshed);
+    if (refreshed.length > 0) {
+      handleSelectFile(refreshed[0]);
+    }
   };
 
   // Video Call Controls
@@ -338,7 +423,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       <div className="flex-1 flex flex-col items-center justify-center bg-[#111215] text-[#eceef2]">
         <RefreshCw className="w-6 h-6 text-[#10b981] animate-spin mb-3" />
         <h2 className="text-sm font-semibold">Connecting to Room {roomCode}...</h2>
-        <p className="text-xs text-[#606470] mt-1">Synchronizing files and live presence</p>
+        <p className="text-xs text-[#606470] mt-1">Synchronizing files and workspace presence</p>
       </div>
     );
   }
@@ -348,7 +433,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       <div className="flex-1 flex flex-col items-center justify-center bg-[#111215] p-6 text-center">
         <div className="max-w-md p-6 bg-[#17181c] border border-[#ef4444]/30 rounded-lg">
           <h2 className="text-sm font-bold text-[#f87171] mb-2">Room Access Error</h2>
-          <p className="text-xs text-[#9a9ea8] mb-4">{error || 'Room not found. Check the code and try again.'}</p>
+          <p className="text-xs text-[#9a9ea8] mb-4">{error || 'Room not found. Check the room code and try again.'}</p>
           <button
             onClick={onLeaveRoom}
             className="px-3 py-1.5 bg-[#202227] hover:bg-[#262830] text-white rounded text-xs font-medium cursor-pointer"
@@ -359,6 +444,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       </div>
     );
   }
+
+  const projectFileNames = files.map((f) => f.name);
 
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-3rem)] bg-[#111215] text-[#eceef2] overflow-hidden select-none">
@@ -397,7 +484,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
               >
                 {SUPPORTED_LANGUAGES.map((lang) => (
                   <option key={lang.key} value={lang.key}>
-                    {lang.label}
+                    {lang.name}
                   </option>
                 ))}
               </select>
@@ -405,13 +492,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           )}
         </div>
 
-        {/* Center: Live Presence (Dynamic Authenticated Users) */}
+        {/* Center: Live Presence */}
         <div className="hidden md:flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#111215] border border-[#2b2d35] text-[11px]">
             <Radio className="w-2.5 h-2.5 text-[#10b981] animate-pulse" />
             <span className="text-[#10b981] font-semibold">{onlineUsers.length} Online:</span>
             <span className="text-[#eceef2] truncate max-w-[280px]">
-              {onlineUsers.map((u) => (u.user_id === user?.id ? `${u.name} (You)` : u.name)).join(', ')}
+              {onlineUsers.map((u) => (u.user_id === user?.id ? `${u.name || 'You'} (You)` : u.name)).join(', ')}
             </span>
           </div>
         </div>
@@ -443,6 +530,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             )}
           </div>
 
+          {/* Save Button */}
+          {activeFile && (
+            <button
+              onClick={() => handleSaveFile(activeFile)}
+              title="Save changes (Ctrl+S)"
+              className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           {/* Quick Call Button */}
           <button
             onClick={inCall ? handleLeaveCall : handleJoinCall}
@@ -460,7 +558,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           <button
             onClick={handleRunCode}
             disabled={isRunning || !activeFile}
-            title="Run code in sandbox (Ctrl+Enter)"
+            title="Execute Code in Sandbox (Ctrl+Enter)"
             className="px-3 py-1 bg-[#10b981] hover:bg-[#059669] text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
           >
             <Play className={`w-3 h-3 fill-current ${isRunning ? 'animate-pulse' : ''}`} />
@@ -475,10 +573,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
         <FileExplorer
           files={files}
           activeFileId={activeFile?.id || null}
-          onSelectFile={(f) => setActiveFile(f)}
+          onSelectFile={handleSelectFile}
           onCreateFile={handleCreateFile}
           onRenameFile={handleRenameFile}
           onDeleteFile={handleDeleteFile}
+          onOpenLocalFile={handleOpenLocalFile}
+          onOpenLocalFolder={handleOpenLocalFolder}
+          onRefresh={loadInitialData}
+          roomName={room.name}
         />
 
         {/* Center: Monaco Collaborative Editor + Terminal */}
@@ -486,10 +588,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           <EditorPanel
             files={files}
             activeFile={activeFile}
-            onSelectFile={(f) => setActiveFile(f)}
+            openTabs={openTabs}
+            onSelectFile={handleSelectFile}
+            onCloseTab={handleCloseTab}
             onCodeChange={handleCodeChange}
             onCursorMove={handleCursorMove}
             onSelectionChange={(text) => setSelectedText(text)}
+            onSaveFile={handleSaveFile}
             remoteCursors={remoteCursors.filter((c) => c.file_id === activeFile?.id)}
           />
 
@@ -498,10 +603,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             onRun={handleRunCode}
             onClear={() => setExecResult({ status: 'idle', output: '' })}
             isRunning={isRunning}
+            stdin={stdin}
+            onStdinChange={(val) => setStdin(val)}
+            language={activeFile?.language || 'python'}
           />
         </div>
 
-        {/* Right: Real-time Panel (Video + Chat / AI) */}
+        {/* Right: Real-time Panel (Video + AI / Chat) */}
         <div className="w-80 border-l border-[#2b2d35] bg-[#17181c] flex flex-col h-full overflow-hidden">
           {/* Video Dock */}
           <VideoCallPanel
@@ -516,18 +624,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             onToggleVideo={handleToggleVideo}
           />
 
-          {/* Right tab switcher */}
+          {/* Right Tab Switcher */}
           <div className="flex border-b border-[#2b2d35] bg-[#111215] text-xs">
-            <button
-              onClick={() => setActiveRightTab('chat')}
-              className={`flex-1 py-1.5 flex items-center justify-center gap-1.5 font-medium transition cursor-pointer ${
-                activeRightTab === 'chat'
-                  ? 'text-[#10b981] border-b-2 border-[#10b981] bg-[#17181c]'
-                  : 'text-[#9a9ea8] hover:text-white'
-              }`}
-            >
-              <span>Chat</span>
-            </button>
             <button
               onClick={() => setActiveRightTab('ai')}
               className={`flex-1 py-1.5 flex items-center justify-center gap-1.5 font-medium transition cursor-pointer ${
@@ -538,22 +636,33 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             >
               <span>AI Assistant</span>
             </button>
+            <button
+              onClick={() => setActiveRightTab('chat')}
+              className={`flex-1 py-1.5 flex items-center justify-center gap-1.5 font-medium transition cursor-pointer ${
+                activeRightTab === 'chat'
+                  ? 'text-[#10b981] border-b-2 border-[#10b981] bg-[#17181c]'
+                  : 'text-[#9a9ea8] hover:text-white'
+              }`}
+            >
+              <span>Chat</span>
+            </button>
           </div>
 
           {/* Tab View */}
           <div className="flex-1 overflow-hidden">
-            {activeRightTab === 'chat' ? (
-              <ChatPanel
-                messages={messages}
-                onSendMessage={handleSendMessage}
-              />
-            ) : (
+            {activeRightTab === 'ai' ? (
               <AIAssistantPanel
                 currentCode={activeFile?.content || ''}
                 selectedCode={selectedText}
                 language={activeFile?.language || 'python'}
                 activeFileName={activeFile?.name || ''}
                 lastError={lastError}
+                projectFiles={projectFileNames}
+              />
+            ) : (
+              <ChatPanel
+                messages={messages}
+                onSendMessage={handleSendMessage}
               />
             )}
           </div>

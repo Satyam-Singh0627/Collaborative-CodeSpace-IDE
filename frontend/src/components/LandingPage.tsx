@@ -109,10 +109,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
             {/* Mock Editor */}
             <div className="col-span-2 p-4 bg-[#111215] leading-relaxed">
-              <div className="text-[#606470] mb-1"># Live Multi-File Execution</div>
+              <div className="text-[#606470] mb-1"># Multi-File Workspace Execution</div>
               <div className="text-[#f87171]">from <span className="text-[#38bdf8]">utils</span> <span className="text-[#f87171]">import</span> <span className="text-[#c084fc]">greet_team</span></div>
               <div className="mt-1 text-[#f87171]">def <span className="text-[#c084fc]">main</span><span className="text-white">():</span></div>
-              <div className="pl-4 text-white">team = [<span className="text-[#a7f3d0]">"Developer A"</span>, <span className="text-[#a7f3d0]">"Developer B"</span>]</div>
+              <div className="pl-4 text-white">team = [<span className="text-[#a7f3d0]">"Workspace"</span>, <span className="text-[#a7f3d0]">"Collaborator"</span>]</div>
               <div className="pl-4 text-[#38bdf8]">print<span className="text-white">(greet_team(team))</span></div>
               
               <div className="mt-4 pt-2.5 border-t border-[#2b2d35] flex items-center justify-between text-[11px] text-[#9a9ea8]">

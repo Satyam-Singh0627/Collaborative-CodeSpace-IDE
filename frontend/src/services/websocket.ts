@@ -1,4 +1,5 @@
 import type { OnlineUser } from '../types';
+import { getWebSocketUrl } from '../config';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
@@ -34,10 +35,8 @@ export class CodeSpaceWebSocket {
     this.isExplicitDisconnect = false;
     this.callbacks.onStatusChange?.('connecting');
 
-    // Build WS URL
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/${encodeURIComponent(this.roomCode)}?token=${encodeURIComponent(this.token)}`;
+    // Build environment-aware WS URL
+    const wsUrl = getWebSocketUrl(this.roomCode, this.token);
 
     try {
       this.socket = new WebSocket(wsUrl);

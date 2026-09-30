@@ -14,6 +14,20 @@ elif (BASE_DIR / ".env").exists():
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 PORT = int(os.getenv("PORT", "8000"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Parse allowed origins for CORS (supports comma-separated origins, removes trailing slashes)
+_raw_origins = os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ORIGINS") or os.getenv("FRONTEND_URL", "http://localhost:5173")
+_configured_origins = [orig.strip().rstrip("/") for orig in _raw_origins.split(",") if orig.strip()]
+_default_local_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+ALLOWED_ORIGINS = list(dict.fromkeys(_default_local_origins + _configured_origins))
+
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/codespace.db")
 
 JWT_SECRET = os.getenv("JWT_SECRET", "codespace-dev-insecure-secret-key-change-in-prod-12345")

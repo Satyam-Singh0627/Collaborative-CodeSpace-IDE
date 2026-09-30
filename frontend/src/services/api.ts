@@ -1,6 +1,5 @@
 import type { User, Room, ProjectFile, ChatMessage, ExecutionResult } from '../types';
-
-const API_BASE = '/api';
+import { API_BASE } from '../config';
 
 function getAuthHeaders(token?: string | null): HeadersInit {
   const headers: HeadersInit = {

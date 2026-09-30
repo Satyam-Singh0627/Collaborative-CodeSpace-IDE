@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .config import FRONTEND_URL, ENVIRONMENT
+from .config import ALLOWED_ORIGINS, ENVIRONMENT
 from .database import engine, Base
 from .routers import auth, rooms, ws, execution, ai
 
@@ -14,15 +14,11 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Uses explicit allowed origins with credential support (no wildcard '*'), plus matches Vercel domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        FRONTEND_URL,
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

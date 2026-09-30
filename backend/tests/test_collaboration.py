@@ -355,3 +355,47 @@ def test_ai_agent_tools(db_session: Session):
     # Verify deletion in DB
     deleted = db_session.query(ProjectFile).filter(ProjectFile.room_id == room.id, ProjectFile.name == "agent_renamed.py").first()
     assert deleted is None
+
+
+def test_file_state_isolation_and_save_integrity(client, db_session):
+    """
+    Verify that file versioning is strictly monotonic, file state in the database
+    remains protected from unsolicited mutations, and local file operations
+    maintain database isolation.
+    """
+    # 1. Register user and create room
+    _, token = create_test_user(client, "SaveTester", f"savetester_{uuid.uuid4().hex[:8]}@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    room_res = client.post("/api/rooms", json={"name": "Save Integrity Room"}, headers=headers)
+    assert room_res.status_code == 201
+    room_code = room_res.json()["room_code"]
+
+    # 2. Create a test file
+    file_res = client.post(f"/api/rooms/{room_code}/files", json={
+        "name": "calculator.py",
+        "language": "python",
+        "content": "def add(a, b): return a + b"
+    }, headers=headers)
+    assert file_res.status_code == 201
+    file_data = file_res.json()
+    file_id = file_data["id"]
+    initial_version = file_data["version"]
+
+    # 3. Verify server state is unaffected until an explicit PUT update
+    files_list = client.get(f"/api/rooms/{room_code}/files", headers=headers).json()
+    assert len(files_list) >= 1
+    calc_file = next(f for f in files_list if f["id"] == file_id)
+    assert calc_file["version"] == initial_version
+    assert calc_file["content"] == "def add(a, b): return a + b"
+
+    # 4. Perform explicit update and verify monotonic version increment
+    update_res = client.put(f"/api/rooms/{room_code}/files/{file_id}", json={
+        "content": "def add(a, b): return a + b\n\ndef sub(a, b): return a - b",
+        "version": initial_version
+    }, headers=headers)
+    assert update_res.status_code == 200
+    updated_file = update_res.json()
+    assert updated_file["version"] == initial_version + 1
+    assert "def sub" in updated_file["content"]
+

@@ -537,7 +537,9 @@ async def execute_code(
 
     # Provider Resolution Strategy:
     # 1. If explicit EXECUTION_PROVIDER configured
-    if EXECUTION_PROVIDER == "piston":
+    if EXECUTION_PROVIDER == "local":
+        return await local_provider.execute(lang_key, files, entry_file, stdin)
+    elif EXECUTION_PROVIDER == "piston":
         return await piston_provider.execute(lang_key, files, entry_file, stdin)
     elif EXECUTION_PROVIDER == "judge0":
         return await judge0_provider.execute(lang_key, files, entry_file, stdin)

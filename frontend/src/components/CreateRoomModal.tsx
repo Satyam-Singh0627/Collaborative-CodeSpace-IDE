@@ -14,7 +14,6 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   onRoomCreated,
 }) => {
   const [name, setName] = useState('');
-  const [language, setLanguage] = useState('python');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -30,7 +29,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
     setLoading(true);
 
     try {
-      const room = await api.createRoom(name.trim(), language);
+      const room = await api.createRoom(name.trim());
       onRoomCreated(room.room_code);
       onClose();
     } catch (err: unknown) {
@@ -77,31 +76,8 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-[#eceef2] mb-1.5">Primary Environment</label>
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="w-full bg-[#111215] border border-[#2b2d35] rounded px-3 py-1.5 text-xs text-white focus:border-[#10b981] focus:outline-hidden transition cursor-pointer"
-            >
-              <option value="python">Python</option>
-              <option value="javascript">JavaScript</option>
-              <option value="typescript">TypeScript</option>
-              <option value="c">C</option>
-              <option value="cpp">C++</option>
-              <option value="java">Java</option>
-              <option value="go">Go</option>
-              <option value="rust">Rust</option>
-              <option value="ruby">Ruby</option>
-              <option value="php">PHP</option>
-              <option value="csharp">C#</option>
-              <option value="kotlin">Kotlin</option>
-              <option value="bash">Bash</option>
-            </select>
-          </div>
-
           <div className="p-2.5 rounded bg-[#111215] border border-[#2b2d35] text-[11px] text-[#9a9ea8]">
-            Starter files (<code className="text-[#eceef2]">main.py</code>, <code className="text-[#eceef2]">utils.py</code>, <code className="text-[#eceef2]">README.md</code>) will be created automatically for multi-file editing.
+            Starter files (<code className="text-[#eceef2]">main.py</code>, <code className="text-[#eceef2]">utils.py</code>, <code className="text-[#eceef2]">README.md</code>) will be created automatically. Language is detected from file extensions — your room supports all languages simultaneously.
           </div>
 
           <button

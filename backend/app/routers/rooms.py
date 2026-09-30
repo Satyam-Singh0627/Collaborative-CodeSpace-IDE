@@ -16,6 +16,40 @@ from ..auth import get_current_user
 
 router = APIRouter(prefix="/api/rooms", tags=["Rooms"])
 
+# Extension -> language key mapping
+_EXT_LANG_MAP = {
+    "py": "python", "pyw": "python",
+    "js": "javascript", "jsx": "javascript", "mjs": "javascript", "cjs": "javascript",
+    "ts": "typescript", "tsx": "typescript",
+    "c": "c", "h": "c",
+    "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "hpp": "cpp", "hxx": "cpp",
+    "java": "java",
+    "go": "go",
+    "rs": "rust",
+    "php": "php", "phtml": "php",
+    "rb": "ruby",
+    "cs": "csharp",
+    "kt": "kotlin", "kts": "kotlin",
+    "sh": "bash", "bash": "bash", "zsh": "bash",
+    "html": "html", "htm": "html",
+    "css": "css", "scss": "css", "sass": "css", "less": "css",
+    "json": "json",
+    "md": "markdown", "markdown": "markdown",
+    "sql": "sql",
+    "yaml": "yaml", "yml": "yaml",
+    "xml": "xml", "svg": "xml",
+}
+
+
+def _detect_language(filename: str) -> str:
+    """Auto-detect language from file extension."""
+    parts = filename.rsplit(".", 1)
+    if len(parts) < 2:
+        return "plaintext"
+    ext = parts[-1].lower()
+    return _EXT_LANG_MAP.get(ext, "plaintext")
+
+
 def generate_room_code() -> str:
     chars = string.ascii_uppercase + string.digits
     suffix = ''.join(random.choices(chars, k=4))
@@ -106,7 +140,10 @@ def create_room(
             room_id=room.id,
             name=item["name"],
             language=item["language"],
-            content=item["content"]
+            content=item["content"],
+            version=1,
+            created_by=current_user.id,
+            updated_by=current_user.id,
         )
         db.add(p_file)
 
@@ -233,18 +270,32 @@ def create_room_file(
         raise HTTPException(status_code=404, detail="Room not found")
 
     # Check for duplicate file name in same room
+    clean_name = file_in.name.strip()
     existing = db.query(ProjectFile).filter(
         ProjectFile.room_id == room.id,
-        ProjectFile.name == file_in.name.strip()
+        ProjectFile.name == clean_name
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="A file with this name already exists in the room.")
 
+    # Auto-detect language from extension if not provided
+    language = file_in.language
+    if not language:
+        language = _detect_language(clean_name)
+
+    # Extract parent path
+    parts = clean_name.rsplit("/", 1)
+    parent_path = parts[0] if len(parts) > 1 else ""
+
     new_file = ProjectFile(
         room_id=room.id,
-        name=file_in.name.strip(),
-        language=file_in.language or "python",
-        content=file_in.content or ""
+        name=clean_name,
+        parent_path=parent_path,
+        language=language,
+        content=file_in.content or "",
+        version=1,
+        created_by=current_user.id,
+        updated_by=current_user.id,
     )
     db.add(new_file)
     db.commit()
@@ -271,12 +322,29 @@ def update_room_file(
     if not p_file:
         raise HTTPException(status_code=404, detail="File not found")
 
+    # Optimistic concurrency check
+    if file_in.version is not None and file_in.version < p_file.version:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Version conflict: server has v{p_file.version}, you sent v{file_in.version}"
+        )
+
     if file_in.name is not None:
-        p_file.name = file_in.name.strip()
+        clean_name = file_in.name.strip()
+        p_file.name = clean_name
+        # Auto-detect language on rename
+        p_file.language = _detect_language(clean_name)
+        # Update parent path
+        parts = clean_name.rsplit("/", 1)
+        p_file.parent_path = parts[0] if len(parts) > 1 else ""
+
     if file_in.language is not None:
         p_file.language = file_in.language
     if file_in.content is not None:
         p_file.content = file_in.content
+
+    p_file.version += 1
+    p_file.updated_by = current_user.id
 
     db.commit()
     db.refresh(p_file)
@@ -301,9 +369,10 @@ def delete_room_file(
     if not p_file:
         raise HTTPException(status_code=404, detail="File not found")
 
+    file_name = p_file.name
     db.delete(p_file)
     db.commit()
-    return {"status": "success", "message": f"File '{p_file.name}' deleted successfully."}
+    return {"status": "success", "message": f"File '{file_name}' deleted successfully."}
 
 @router.get("/{room_code}/messages", response_model=List[MessageResponse])
 def get_room_messages(

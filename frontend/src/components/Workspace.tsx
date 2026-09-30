@@ -17,7 +17,7 @@ import { AIAssistantPanel } from './AIAssistantPanel';
 import { VideoCallPanel } from './VideoCallPanel';
 import { OutputPanel } from './OutputPanel';
 import { SUPPORTED_LANGUAGES, getLanguageFromFileName } from '../utils/languages';
-import { openLocalFile, openLocalFolder, saveLocalFile } from '../utils/fileSystem';
+import { openLocalFile, openLocalFolder, saveActiveFileLocally } from '../utils/fileSystem';
 
 interface WorkspaceProps {
   roomCode: string;
@@ -64,6 +64,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
   const webrtcRef = useRef<WebRTCService | null>(null);
   const debounceTimerRef = useRef<number | null>(null);
   const savingTimerRef = useRef<number | null>(null);
+
+  // Map to remember local File System Access handles during active session
+  const fileHandlesRef = useRef<Map<string, any>>(new Map());
 
   // 1. Initial Load: Fetch room, files, messages
   const loadInitialData = useCallback(async () => {
@@ -364,25 +367,54 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
     }, 100);
   }, [files]);
 
-  // Save active file
-  const handleSaveFile = async (file: ProjectFile) => {
-    if (file.isLocal) {
-      await saveLocalFile(file as any);
-    } else {
-      await api.updateFile(roomCode, file.id, { content: file.content, version: file.version });
+  // Save active file to local computer (File System Access API with download fallback)
+  const handleSaveActiveFileLocally = useCallback(async (fileToSave?: ProjectFile) => {
+    const target = fileToSave || activeFile;
+    if (!target) return;
+
+    const existingHandle = target.fileHandle || fileHandlesRef.current.get(target.id);
+    const res = await saveActiveFileLocally({
+      name: target.name,
+      content: target.content,
+      handle: existingHandle,
+    });
+
+    if (res.aborted) {
+      return;
     }
 
-    setFiles((prev) =>
-      prev.map((f) => (f.id === file.id ? { ...f, unsaved: false } : f))
-    );
-    setOpenTabs((prev) =>
-      prev.map((f) => (f.id === file.id ? { ...f, unsaved: false } : f))
-    );
-    setActiveFile((prev) => (prev && prev.id === file.id ? { ...prev, unsaved: false } : prev));
-    setSyncStatus('saved');
-    if (savingTimerRef.current) clearTimeout(savingTimerRef.current);
-    savingTimerRef.current = window.setTimeout(() => setSyncStatus('idle'), 2000);
-  };
+    if (res.success) {
+      if (res.handle) {
+        fileHandlesRef.current.set(target.id, res.handle);
+      }
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === target.id ? { ...f, unsaved: false, fileHandle: res.handle || f.fileHandle } : f
+        )
+      );
+      setOpenTabs((prev) =>
+        prev.map((f) =>
+          f.id === target.id ? { ...f, unsaved: false, fileHandle: res.handle || f.fileHandle } : f
+        )
+      );
+      setActiveFile((prev) =>
+        prev && prev.id === target.id ? { ...prev, unsaved: false, fileHandle: res.handle || prev.fileHandle } : prev
+      );
+    }
+  }, [activeFile]);
+
+  // Global keyboard shortcut: Ctrl/Cmd + S to Save File locally (prevent browser webpage save)
+  useEffect(() => {
+    const handleGlobalSaveKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSaveActiveFileLocally();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalSaveKey, true);
+    return () => window.removeEventListener('keydown', handleGlobalSaveKey, true);
+  }, [handleSaveActiveFileLocally]);
 
   // Cursor Move Handler
   const handleCursorMove = useCallback((fileId: string, cursor: { lineNumber: number; column: number }) => {
@@ -684,7 +716,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           {/* Save Button */}
           {activeFile && (
             <button
-              onClick={() => handleSaveFile(activeFile)}
+              onClick={() => handleSaveActiveFileLocally(activeFile)}
               title="Save changes (Ctrl+S)"
               className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
             >
@@ -745,7 +777,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             onCodeChange={handleCodeChange}
             onCursorMove={handleCursorMove}
             onSelectionChange={(text) => setSelectedText(text)}
-            onSaveFile={handleSaveFile}
+            onSaveFile={handleSaveActiveFileLocally}
             remoteCursors={remoteCursors.filter((c) => c.file_id === activeFile?.id)}
           />
 

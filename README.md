@@ -109,47 +109,44 @@ Collaborative-CodeSpace-IDE/
 
 ---
 
-## 🚀 Quickstart & Local Setup
+## 🚀 Quickstart & One-Command Launch
 
 ### 1. Prerequisites
 - Python 3.10 or higher
 - Node.js 18 or higher (npm / pnpm / yarn)
 
-### 2. Backend Setup
+### 2. One-Command Complete Launch
+From the project root directory, run:
 ```bash
-# Navigate to backend directory
-cd backend
-
-# Create and activate virtual environment (optional but recommended)
-python -m venv .venv
-# On Windows:
-.venv\Scripts\activate
-# On Linux/macOS:
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start FastAPI backend server
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python start.py
+# or
+npm start
 ```
+This automatically:
+1. Starts the FastAPI backend server on `http://127.0.0.1:8000`.
+2. Starts the Vite frontend dev server on `http://localhost:5173`.
+3. Waits for both services to be online.
+4. Automatically opens the Collaborative CodeSpace IDE in your default web browser.
 
-The backend server will run at `http://127.0.0.1:8000`.  
-Interactive API documentation is accessible at `http://127.0.0.1:8000/docs`.
+---
 
-### 3. Frontend Setup
+### 3. Manual Component Setup (Optional)
+
+#### Backend Setup
 ```bash
-# In a new terminal, navigate to frontend directory
+cd backend
+pip install -r requirements.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+Backend API will run at `http://127.0.0.1:8000` (docs at `http://127.0.0.1:8000/docs`).
+
+#### Frontend Setup
+```bash
 cd frontend
-
-# Install node dependencies
 npm install
-
-# Start Vite development server
 npm run dev
 ```
-
-The frontend application will run at `http://localhost:5173`.
+Frontend client will run at `http://localhost:5173`.
 
 ---
 

@@ -1,0 +1,21 @@
+{
+  "name": "collaborative-codespace-ide",
+  "version": "1.0.0",
+  "description": "Collaborative CodeSpace IDE - Real-time collaborative coding workspace",
+  "scripts": {
+    "start": "python start.py",
+    "dev": "python start.py",
+    "test": "python tests/test_full_e2e.py"
+  },
+  "keywords": [
+    "collaborative",
+    "ide",
+    "monaco-editor",
+    "webrtc",
+    "websockets",
+    "fastapi",
+    "react"
+  ],
+  "author": "",
+  "license": "MIT"
+}

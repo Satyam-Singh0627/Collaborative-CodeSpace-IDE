@@ -18,23 +18,27 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 # Parse allowed origins for CORS (supports comma-separated origins, removes trailing slashes)
 _raw_origins = os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ORIGINS") or os.getenv("FRONTEND_URL", "http://localhost:5173")
 _configured_origins = [orig.strip().rstrip("/") for orig in _raw_origins.split(",") if orig.strip()]
-_default_local_origins = [
+_default_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:5174",
     "http://127.0.0.1:5174",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://collaborative-code-space-ide.vercel.app",
+    "https://collaborative-codespace-ide.onrender.com",
 ]
-ALLOWED_ORIGINS = list(dict.fromkeys(_default_local_origins + _configured_origins))
+ALLOWED_ORIGINS = list(dict.fromkeys(_default_origins + _configured_origins))
 
 # Database Configuration
 _default_db_path = BASE_DIR / "codespace.db"
 _raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{_default_db_path}")
 
-# Normalize postgres:// to postgresql:// for SQLAlchemy / Render / Heroku compatibility
+# Normalize postgres:// and postgresql:// to postgresql+psycopg:// for SQLAlchemy 2.0 / Render compatibility
 if _raw_db_url.startswith("postgres://"):
-    _raw_db_url = _raw_db_url.replace("postgres://", "postgresql://", 1)
+    _raw_db_url = _raw_db_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif _raw_db_url.startswith("postgresql://"):
+    _raw_db_url = _raw_db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
 DATABASE_URL = _raw_db_url
 

@@ -255,8 +255,18 @@ def test_cascade_deletion():
 
 
 def test_postgres_url_normalization():
-    """Verify postgres:// is safely normalized to postgresql:// for SQLAlchemy compatibility."""
+    """Verify postgres:// and postgresql:// are safely normalized for SQLAlchemy psycopg compatibility."""
     raw = "postgres://username:secret_pass@db.render.com:5432/codespace_prod"
-    normalized = raw.replace("postgres://", "postgresql://", 1) if raw.startswith("postgres://") else raw
-    assert normalized.startswith("postgresql://")
+    normalized = raw.replace("postgres://", "postgresql+psycopg://", 1) if raw.startswith("postgres://") else raw
+    assert normalized.startswith("postgresql+psycopg://")
     assert "username:secret_pass" in normalized
+
+
+def test_psycopg_driver_available():
+    """Verify modern psycopg (v3) PostgreSQL driver is installed and discoverable by SQLAlchemy."""
+    import psycopg
+    from sqlalchemy.dialects import registry
+
+    assert psycopg.__version__ is not None
+    dialect_cls = registry.load("postgresql.psycopg")
+    assert dialect_cls is not None

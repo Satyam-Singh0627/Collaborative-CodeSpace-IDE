@@ -15,11 +15,24 @@ export interface LocalFolderResult {
   files: LocalFileEntry[];
 }
 
+export interface SaveFileResult {
+  success: boolean;
+  aborted?: boolean;
+  handle?: any;
+  filename?: string;
+  message: string;
+}
+
 /**
  * Check if the browser supports the File System Access API.
  */
 export function isFileSystemAccessSupported(): boolean {
-  return typeof window !== 'undefined' && 'showDirectoryPicker' in window && 'showOpenFilePicker' in window;
+  return (
+    typeof window !== 'undefined' &&
+    'showDirectoryPicker' in window &&
+    'showOpenFilePicker' in window &&
+    'showSaveFilePicker' in window
+  );
 }
 
 /**
@@ -223,33 +236,104 @@ function openLocalFolderFallback(): Promise<LocalFolderResult | null> {
 }
 
 /**
- * Save file back to disk if handle is available, or download as fallback.
+ * Save ONLY the active source file to the user's local computer.
+ * If a local handle exists, it writes directly.
+ * If not, it opens the browser's showSaveFilePicker dialog.
+ * If unsupported, downloads as fallback blob.
  */
-export async function saveLocalFile(file: LocalFileEntry): Promise<boolean> {
-  if (file.handle && 'createWritable' in file.handle) {
+export async function saveActiveFileLocally(
+  file: { name: string; content: string; handle?: any; fileHandle?: any },
+  suggestedName?: string,
+): Promise<SaveFileResult> {
+  const targetHandle = file.handle || file.fileHandle;
+  const fileName = (suggestedName || file.name).split('/').pop() || file.name;
+
+  // 1. Direct write to existing File System Access handle
+  if (targetHandle && typeof targetHandle.createWritable === 'function') {
     try {
-      const writable = await file.handle.createWritable();
+      const writable = await targetHandle.createWritable();
       await writable.write(file.content);
       await writable.close();
-      return true;
-    } catch (err) {
-      console.warn('Failed to write to file handle:', err);
+      return {
+        success: true,
+        handle: targetHandle,
+        filename: fileName,
+        message: `Saved ${fileName}`,
+      };
+    } catch (err: any) {
+      console.warn('Writing to existing handle failed, prompting for location:', err);
     }
   }
 
-  // Fallback: Trigger browser file download
+  // 2. Open Save File dialog with File System Access API
+  if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+    try {
+      const ext = fileName.includes('.') ? fileName.split('.').pop() : '';
+      const pickerOptions: any = {
+        suggestedName: fileName,
+      };
+
+      if (ext) {
+        pickerOptions.types = [
+          {
+            description: `${ext.toUpperCase()} Source File`,
+            accept: { 'text/plain': [`.${ext}`] },
+          },
+        ];
+      }
+
+      const handle = await (window as any).showSaveFilePicker(pickerOptions);
+      const writable = await handle.createWritable();
+      await writable.write(file.content);
+      await writable.close();
+
+      const savedFile = await handle.getFile();
+      return {
+        success: true,
+        handle,
+        filename: savedFile.name || fileName,
+        message: `Saved ${savedFile.name || fileName}`,
+      };
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return {
+          success: false,
+          aborted: true,
+          message: 'Save cancelled',
+        };
+      }
+      console.warn('showSaveFilePicker failed, trying download fallback:', err);
+    }
+  }
+
+  // 3. Fallback: Browser download
   try {
     const blob = new Blob([file.content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = file.name.split('/').pop() || file.name;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    return true;
-  } catch {
-    return false;
+    return {
+      success: true,
+      filename: fileName,
+      message: `Downloaded ${fileName}`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Failed to save file: ${err.message || 'Unknown error'}`,
+    };
   }
+}
+
+/**
+ * Legacy wrapper for backwards compatibility with any existing calls.
+ */
+export async function saveLocalFile(file: LocalFileEntry): Promise<boolean> {
+  const res = await saveActiveFileLocally(file);
+  return res.success;
 }

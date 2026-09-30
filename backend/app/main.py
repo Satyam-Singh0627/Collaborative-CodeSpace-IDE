@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .config import ALLOWED_ORIGINS, ENVIRONMENT
+from .config import ALLOWED_ORIGINS, ENVIRONMENT, DATABASE_URL
 from .database import engine, Base
 from .routers import auth, rooms, ws, execution, ai
 
@@ -10,7 +10,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Collaborative CodeSpace API",
     description="Real-Time Collaborative Code Editor & Collaboration Room API",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # Configure CORS
@@ -37,17 +37,19 @@ def root():
         "app": "Collaborative CodeSpace API",
         "tagline": "Code Together. Communicate Together. Build Together.",
         "status": "online",
+        "version": "2.0.0",
         "environment": ENVIRONMENT
     }
 
 @app.get("/api/health")
 def health_check():
+    db_type = "postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite"
     return {
         "status": "healthy",
         "services": {
             "api": "up",
             "websocket": "ready",
-            "database": "sqlite_ready",
+            "database": f"{db_type}_ready",
             "execution": "ready",
             "ai": "ready"
         }

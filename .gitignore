@@ -2,15 +2,31 @@
 .env
 .env.*
 !.env.example
+!**/.env.example
 *.env
 backend/.env
 backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
 *.pem
 *.key
 *.cert
 Collaborative_CodeSpace_Antigravity_Master_Documentation.md
+*Documentation*.md
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+codespace.db
+backend/*.db
+backend/*.sqlite3
 
 # Python
+.pytest_cache/
+backend/.pytest_cache/
 __pycache__/
 *.py[cod]
 *$py.class

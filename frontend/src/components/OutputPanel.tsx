@@ -124,7 +124,7 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({
 
         {/* Controls */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-[#606470] font-mono px-1.5 py-0.5 bg-[#111215] rounded border border-[#2b2d35]">
+          <span className="text-[10px] text-[#606470] font-mono px-2 py-0.5 bg-[#111215] rounded border border-[#2b2d35]">
             {language}
           </span>
 
@@ -152,12 +152,13 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({
             onClick={onRun}
             disabled={isRunning}
             title="Execute Code (Ctrl+Enter)"
-            className="px-2.5 py-0.5 bg-[#10b981] hover:bg-[#059669] text-white rounded text-[11px] font-medium flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+            aria-label="Execute Code (Ctrl+Enter)"
+            className="h-7 px-3 bg-[#10b981] hover:bg-[#059669] text-white rounded text-[11px] font-medium flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
           >
             {isRunning ? (
-              <RotateCcw className="w-2.5 h-2.5 animate-spin" />
+              <RotateCcw className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Play className="w-2.5 h-2.5 fill-current" />
+              <Play className="w-3.5 h-3.5 fill-current" />
             )}
             <span>{isRunning ? 'Running' : 'Run'}</span>
           </button>

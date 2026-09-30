@@ -23,6 +23,14 @@ export interface SaveFileResult {
   message: string;
 }
 
+export interface SaveProjectResult {
+  success: boolean;
+  aborted?: boolean;
+  count: number;
+  folderName?: string;
+  message: string;
+}
+
 /**
  * Check if the browser supports the File System Access API.
  */
@@ -104,7 +112,7 @@ async function readDirectoryRecursive(
   dirHandle: any,
   currentPath = '',
   collected: LocalFileEntry[] = [],
-  maxFiles = 100,
+  maxFiles = 200,
 ): Promise<LocalFileEntry[]> {
   for await (const entry of dirHandle.values()) {
     if (collected.length >= maxFiles) break;
@@ -127,8 +135,7 @@ async function readDirectoryRecursive(
     if (entry.kind === 'file') {
       try {
         const file = await entry.getFile();
-        // Skip binary or huge files (>1MB)
-        if (file.size > 1024 * 1024) continue;
+        if (file.size > 2 * 1024 * 1024) continue; // Skip files > 2MB
 
         const content = await file.text();
         const language = getLanguageFromFileName(entry.name);
@@ -200,16 +207,15 @@ function openLocalFolderFallback(): Promise<LocalFolderResult | null> {
       const files: LocalFileEntry[] = [];
       const rootName = fileList[0].webkitRelativePath.split('/')[0] || 'Local Project';
 
-      for (let i = 0; i < Math.min(fileList.length, 100); i++) {
+      for (let i = 0; i < Math.min(fileList.length, 150); i++) {
         const file = fileList[i];
         const relativePath = file.webkitRelativePath.replace(`${rootName}/`, '');
 
-        // Skip ignored directories
         if (
           relativePath.includes('/node_modules/') ||
           relativePath.includes('/.git/') ||
           relativePath.includes('/__pycache__/') ||
-          file.size > 1024 * 1024
+          file.size > 2 * 1024 * 1024
         ) {
           continue;
         }
@@ -234,6 +240,10 @@ function openLocalFolderFallback(): Promise<LocalFolderResult | null> {
     input.click();
   });
 }
+
+// ---------------------------------------------------------------------------
+// SAVE FILE (Single Active File)
+// ---------------------------------------------------------------------------
 
 /**
  * Save ONLY the active source file to the user's local computer.
@@ -328,6 +338,210 @@ export async function saveActiveFileLocally(
       message: `Failed to save file: ${err.message || 'Unknown error'}`,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// SAVE PROJECT (Complete Workspace to Local Folder)
+// ---------------------------------------------------------------------------
+
+/**
+ * Save the COMPLETE project structure into a chosen local folder on disk.
+ * Preserves nested folders, skips node_modules/.git/etc.
+ * Provides ZIP fallback for browsers without showDirectoryPicker.
+ */
+export async function saveProjectLocally(
+  files: { name: string; content: string }[],
+  projectName = 'Collaborative-CodeSpace-Project',
+): Promise<SaveProjectResult> {
+  const validFiles = files.filter((f) => {
+    const n = f.name;
+    return (
+      !n.startsWith('.') &&
+      !n.includes('/.') &&
+      !n.includes('node_modules/') &&
+      !n.includes('__pycache__/') &&
+      !n.includes('.git/') &&
+      !n.includes('dist/')
+    );
+  });
+
+  if (validFiles.length === 0) {
+    return {
+      success: false,
+      count: 0,
+      message: 'No project files to save',
+    };
+  }
+
+  // 1. Direct folder write using showDirectoryPicker
+  if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+    try {
+      const rootDirHandle = await (window as any).showDirectoryPicker({
+        mode: 'readwrite',
+      });
+
+      let savedCount = 0;
+
+      for (const file of validFiles) {
+        const parts = file.name.split('/').filter(Boolean);
+        const fileName = parts.pop()!;
+        let currentDir = rootDirHandle;
+
+        // Traverse / create nested directories
+        for (const subDir of parts) {
+          currentDir = await currentDir.getDirectoryHandle(subDir, { create: true });
+        }
+
+        // Create and write file
+        const fileHandle = await currentDir.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(file.content);
+        await writable.close();
+        savedCount++;
+      }
+
+      return {
+        success: true,
+        count: savedCount,
+        folderName: rootDirHandle.name,
+        message: `Project saved to ${rootDirHandle.name} (${savedCount} files)`,
+      };
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return {
+          success: false,
+          aborted: true,
+          count: 0,
+          message: 'Project save cancelled',
+        };
+      }
+      console.warn('showDirectoryPicker failed, falling back to ZIP archive download:', err);
+    }
+  }
+
+  // 2. Fallback: Generate ZIP and download
+  try {
+    const zipBlob = generateZipBlob(validFiles);
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${projectName.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    return {
+      success: true,
+      count: validFiles.length,
+      message: `Exported project as ${a.download} (${validFiles.length} files)`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      count: 0,
+      message: `Failed to export project: ${err.message || 'Unknown error'}`,
+    };
+  }
+}
+
+/**
+ * Pure TypeScript zero-dependency ZIP archive generator.
+ * Produces valid uncompressed (Store) ZIP file binary blobs.
+ */
+export function generateZipBlob(files: { name: string; content: string }[]): Blob {
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [];
+  const centralHeaders: Uint8Array[] = [];
+  let offset = 0;
+
+  // CRC32 table
+  const crcTable = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    crcTable[i] = c;
+  }
+
+  function getCrc32(bytes: Uint8Array): number {
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i++) {
+      c = crcTable[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  for (const f of files) {
+    const nameBytes = enc.encode(f.name.replace(/^\/+/, ''));
+    const dataBytes = enc.encode(f.content);
+    const crc = getCrc32(dataBytes);
+    const size = dataBytes.length;
+
+    // Local file header (30 bytes + name length)
+    const localHdr = new Uint8Array(30 + nameBytes.length);
+    const lView = new DataView(localHdr.buffer);
+    lView.setUint32(0, 0x04034b50, true); // Local header signature
+    lView.setUint16(4, 20, true); // Version needed: 2.0
+    lView.setUint16(6, 0, true); // Flags
+    lView.setUint16(8, 0, true); // Compression: Store (0)
+    lView.setUint16(10, 0, true); // Mod time
+    lView.setUint16(12, 0, true); // Mod date
+    lView.setUint32(14, crc, true); // CRC32
+    lView.setUint32(18, size, true); // Compressed size
+    lView.setUint32(22, size, true); // Uncompressed size
+    lView.setUint16(26, nameBytes.length, true);
+    lView.setUint16(28, 0, true); // Extra field length
+    localHdr.set(nameBytes, 30);
+
+    parts.push(localHdr, dataBytes);
+
+    // Central directory header (46 bytes + name length)
+    const centralHdr = new Uint8Array(46 + nameBytes.length);
+    const cView = new DataView(centralHdr.buffer);
+    cView.setUint32(0, 0x02014b50, true); // Central header signature
+    cView.setUint16(4, 20, true); // Version made by
+    cView.setUint16(6, 20, true); // Version needed
+    cView.setUint16(8, 0, true); // Flags
+    cView.setUint16(10, 0, true); // Compression method
+    cView.setUint16(12, 0, true); // Mod time
+    cView.setUint16(14, 0, true); // Mod date
+    cView.setUint32(16, crc, true); // CRC32
+    cView.setUint32(20, size, true); // Compressed size
+    cView.setUint32(24, size, true); // Uncompressed size
+    cView.setUint16(28, nameBytes.length, true);
+    cView.setUint16(30, 0, true); // Extra field length
+    cView.setUint16(32, 0, true); // File comment length
+    cView.setUint16(34, 0, true); // Disk number start
+    cView.setUint16(36, 0, true); // Internal attributes
+    cView.setUint32(38, 0, true); // External attributes
+    cView.setUint32(42, offset, true); // Relative offset of local header
+    centralHdr.set(nameBytes, 46);
+
+    centralHeaders.push(centralHdr);
+    offset += localHdr.length + dataBytes.length;
+  }
+
+  const centralOffset = offset;
+  let centralSize = 0;
+  for (const ch of centralHeaders) {
+    centralSize += ch.length;
+  }
+
+  // End of Central Directory record (22 bytes)
+  const eocd = new Uint8Array(22);
+  const eView = new DataView(eocd.buffer);
+  eView.setUint32(0, 0x06054b50, true); // EOCD signature
+  eView.setUint16(4, 0, true); // Disk number
+  eView.setUint16(6, 0, true); // Start disk
+  eView.setUint16(8, files.length, true); // Records on this disk
+  eView.setUint16(10, files.length, true); // Total records
+  eView.setUint32(12, centralSize, true); // Size of central directory
+  eView.setUint32(16, centralOffset, true); // Offset of central directory
+  eView.setUint16(20, 0, true); // Comment length
+
+  return new Blob([...parts, ...centralHeaders, eocd] as BlobPart[], { type: 'application/zip' });
 }
 
 /**

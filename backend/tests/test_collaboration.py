@@ -399,3 +399,132 @@ def test_file_state_isolation_and_save_integrity(client, db_session):
     assert updated_file["version"] == initial_version + 1
     assert "def sub" in updated_file["content"]
 
+
+def test_collaborative_delete_empty_string_sync_flow(client: TestClient):
+    """
+    Test the complete collaborative code sync lifecycle:
+    - User A types code -> User B receives it
+    - User A deletes everything (content = "") -> User B receives empty string
+    - User A receives version_ack without version_conflict
+    - User A types new code -> User B receives new code
+    - Deleted code never comes back
+    - Multiple users (4 concurrent) stay synchronized
+    """
+    uid = uuid.uuid4().hex[:6]
+    u1, tok1 = create_test_user(client, f"CollabA_{uid}", f"collab_a_{uid}@test.com")
+    u2, tok2 = create_test_user(client, f"CollabB_{uid}", f"collab_b_{uid}@test.com")
+    u3, tok3 = create_test_user(client, f"CollabC_{uid}", f"collab_c_{uid}@test.com")
+    u4, tok4 = create_test_user(client, f"CollabD_{uid}", f"collab_d_{uid}@test.com")
+    h1 = {"Authorization": f"Bearer {tok1}"}
+
+    # 1. Create Room & File
+    res = client.post("/api/rooms", json={"name": f"Sync Room {uid}"}, headers=h1)
+    room_code = res.json()["room_code"]
+
+    f_res = client.post(f"/api/rooms/{room_code}/files", json={
+        "name": "collab_scratch.py",
+        "language": "python",
+        "content": "initial_content = True"
+    }, headers=h1)
+    assert f_res.status_code == 201
+    file_id = f_res.json()["id"]
+
+    # 2. Connect Users A, B, C, D to the room
+    with client.websocket_connect(f"/ws/{room_code}?token={tok1}") as ws1, \
+         client.websocket_connect(f"/ws/{room_code}?token={tok2}") as ws2, \
+         client.websocket_connect(f"/ws/{room_code}?token={tok3}") as ws3, \
+         client.websocket_connect(f"/ws/{room_code}?token={tok4}") as ws4:
+
+        def wait_for_type(ws, target_type, max_reads=10):
+            for _ in range(max_reads):
+                msg = ws.receive_json()
+                if msg.get("type") == target_type:
+                    return msg
+            return None
+
+        # --- STEP A: User A types code ---
+        ws1.send_json({
+            "type": "code_change",
+            "file_id": file_id,
+            "content": "def hello():\n    print('world')",
+            "version": 1
+        })
+
+        # User A receives version_ack
+        ack1 = wait_for_type(ws1, "version_ack")
+        assert ack1 is not None
+        assert ack1["file_id"] == file_id
+        v1 = ack1["version"]
+        assert v1 >= 1
+
+        # User B, C, D receive the code_change
+        for ws in (ws2, ws3, ws4):
+            change = wait_for_type(ws, "code_change")
+            assert change is not None
+            assert change["file_id"] == file_id
+            assert change["content"] == "def hello():\n    print('world')"
+            assert change["version"] == v1
+
+        # --- STEP B: User A deletes everything (empty string "") ---
+        ws1.send_json({
+            "type": "code_change",
+            "file_id": file_id,
+            "content": "",
+            "version": v1
+        })
+
+        # User A receives version_ack for empty string
+        ack2 = wait_for_type(ws1, "version_ack")
+        assert ack2 is not None
+        assert ack2["file_id"] == file_id
+        v2 = ack2["version"]
+        assert v2 > v1
+
+        # User B, C, D receive the empty string code_change
+        for ws in (ws2, ws3, ws4):
+            change = wait_for_type(ws, "code_change")
+            assert change is not None
+            assert change["file_id"] == file_id
+            assert change["content"] == ""
+            assert change["version"] == v2
+
+        # --- STEP C: User B types new code on top of empty file ---
+        ws2.send_json({
+            "type": "code_change",
+            "file_id": file_id,
+            "content": "x = 42\ny = 100",
+            "version": v2
+        })
+
+        # User B receives version_ack
+        ack3 = wait_for_type(ws2, "version_ack")
+        assert ack3 is not None
+        v3 = ack3["version"]
+        assert v3 > v2
+
+        # User A, C, D receive new code
+        for ws in (ws1, ws3, ws4):
+            change = wait_for_type(ws, "code_change")
+            assert change is not None
+            assert change["file_id"] == file_id
+            assert change["content"] == "x = 42\ny = 100"
+            assert change["version"] == v3
+
+    # --- STEP D: Reconnect / Resync Verification ---
+    # Reconnecting user must get the latest state ("x = 42\ny = 100"), never old deleted code!
+    with client.websocket_connect(f"/ws/{room_code}?token={tok1}") as ws_reconnect:
+        ws_reconnect.send_json({"type": "resync"})
+        resync = wait_for_type(ws_reconnect, "resync")
+        assert resync is not None
+        file_in_resync = next(f for f in resync["files"] if f["id"] == file_id)
+        assert file_in_resync["content"] == "x = 42\ny = 100"
+        assert "hello()" not in file_in_resync["content"]
+        assert file_in_resync["version"] == v3
+
+    # API verification: Database must also store latest content
+    api_files = client.get(f"/api/rooms/{room_code}/files", headers=h1).json()
+    api_file = next(f for f in api_files if f["id"] == file_id)
+    assert api_file["content"] == "x = 42\ny = 100"
+    assert "hello()" not in api_file["content"]
+
+

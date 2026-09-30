@@ -69,6 +69,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
   // Map to remember local File System Access handles during active session
   const fileHandlesRef = useRef<Map<string, any>>(new Map());
 
+  // Ref tracking latest monotonic file versions to avoid stale closures in debounced handlers
+  const fileVersionsRef = useRef<Map<string, number>>(new Map());
+
   // Non-blocking toast notification for save actions
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -96,6 +99,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
 
       setRoom(roomData);
       setFiles(filesData);
+      filesData.forEach((f) => {
+        fileVersionsRef.current.set(f.id, f.version || 1);
+      });
       if (filesData.length > 0) {
         setActiveFile(filesData[0]);
         setOpenTabs([filesData[0]]);
@@ -124,13 +130,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
         setOnlineUsers(users);
       },
       onCodeChange: (data) => {
-        // Apply remote code change with version check
+        // Ignore echo of our own edits to prevent cursor jumps and state conflicts
+        if (user && data.sender_id === user.id) return;
+
+        // Keep local version ref up to date
+        fileVersionsRef.current.set(data.file_id, data.version);
+
+        // Apply remote code change with monotonic version check
         setFiles((prev) =>
           prev.map((f) => {
             if (f.id === data.file_id) {
-              // Only apply if incoming version is newer
-              if (data.version > (f.version || 0)) {
-                return { ...f, content: data.content, version: data.version };
+              if (data.version >= (f.version || 0)) {
+                return { ...f, content: data.content, version: data.version, unsaved: false };
               }
               return f;
             }
@@ -139,55 +150,40 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
         );
         setOpenTabs((prev) =>
           prev.map((f) => {
-            if (f.id === data.file_id && data.version > (f.version || 0)) {
-              return { ...f, content: data.content, version: data.version };
+            if (f.id === data.file_id && data.version >= (f.version || 0)) {
+              return { ...f, content: data.content, version: data.version, unsaved: false };
             }
             return f;
           })
         );
         setActiveFile((prev) => {
-          if (prev && prev.id === data.file_id && data.version > (prev.version || 0)) {
-            return { ...prev, content: data.content, version: data.version };
+          if (prev && prev.id === data.file_id && data.version >= (prev.version || 0)) {
+            return { ...prev, content: data.content, version: data.version, unsaved: false };
           }
           return prev;
         });
       },
       onVersionAck: (data) => {
-        // Update local version after server acknowledges
+        // Update local version ref and state after server acknowledges
+        fileVersionsRef.current.set(data.file_id, data.version);
         setFiles((prev) =>
-          prev.map((f) => f.id === data.file_id ? { ...f, version: data.version } : f)
+          prev.map((f) => (f.id === data.file_id ? { ...f, version: data.version, unsaved: false } : f))
         );
         setOpenTabs((prev) =>
-          prev.map((f) => f.id === data.file_id ? { ...f, version: data.version } : f)
+          prev.map((f) => (f.id === data.file_id ? { ...f, version: data.version, unsaved: false } : f))
         );
         setActiveFile((prev) =>
-          prev && prev.id === data.file_id ? { ...prev, version: data.version } : prev
+          prev && prev.id === data.file_id ? { ...prev, version: data.version, unsaved: false } : prev
         );
         setSyncStatus('saved');
         if (savingTimerRef.current) clearTimeout(savingTimerRef.current);
         savingTimerRef.current = window.setTimeout(() => setSyncStatus('idle'), 2000);
       },
-      onVersionConflict: (_data) => {
-        // On conflict, refetch latest file state
-        setSyncStatus('error');
-        api.getFiles(roomCode).then((refreshed) => {
-          setFiles(refreshed);
-          // Update active file and tabs
-          setOpenTabs((prev) =>
-            prev.map((tab) => {
-              const fresh = refreshed.find((f) => f.id === tab.id);
-              return fresh || tab;
-            })
-          );
-          setActiveFile((prev) => {
-            if (prev) {
-              const fresh = refreshed.find((f) => f.id === prev.id);
-              return fresh || prev;
-            }
-            return prev;
-          });
-          setSyncStatus('idle');
-        }).catch(() => {});
+      onVersionConflict: (data) => {
+        // Synchronize version pointer without clobbering active local changes
+        if (data.server_version) {
+          fileVersionsRef.current.set(data.file_id, data.server_version);
+        }
       },
       onCursorMove: (data) => {
         setRemoteCursors((prev) => {
@@ -209,19 +205,39 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       onFileEvent: async () => {
         try {
           const refreshed = await api.getFiles(roomCode);
-          setFiles(refreshed);
+          setFiles((prev) => {
+            return refreshed.map((fresh) => {
+              const existing = prev.find((f) => f.id === fresh.id);
+              if (existing && existing.unsaved) {
+                return existing;
+              }
+              const currentV = fileVersionsRef.current.get(fresh.id) || 0;
+              if (currentV > (fresh.version || 0)) {
+                return existing || fresh;
+              }
+              fileVersionsRef.current.set(fresh.id, fresh.version || 0);
+              return fresh;
+            });
+          });
           // Update open tabs with refreshed data
           setOpenTabs((prev) =>
             prev.map((tab) => {
               const fresh = refreshed.find((f) => f.id === tab.id);
-              return fresh || tab;
+              if (!fresh) return tab;
+              if (tab.unsaved) return tab;
+              const currentV = fileVersionsRef.current.get(tab.id) || 0;
+              if (currentV > (fresh.version || 0)) return tab;
+              return fresh;
             }).filter((tab) => refreshed.some((f) => f.id === tab.id))
           );
           // Update active file
           setActiveFile((prev) => {
             if (prev) {
+              if (prev.unsaved) return prev;
               const fresh = refreshed.find((f) => f.id === prev.id);
               if (!fresh && refreshed.length > 0) return refreshed[0];
+              const currentV = fileVersionsRef.current.get(prev.id) || 0;
+              if (fresh && currentV > (fresh.version || 0)) return prev;
               return fresh || prev;
             }
             if (refreshed.length > 0) return refreshed[0];
@@ -231,14 +247,31 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       },
       onResync: (data) => {
         // Full state resynchronization on reconnect
-        setFiles(data.files);
+        setFiles((prev) => {
+          return data.files.map((fresh: ProjectFile) => {
+            const existing = prev.find((f) => f.id === fresh.id);
+            if (existing && existing.unsaved) {
+              return existing;
+            }
+            const currentV = fileVersionsRef.current.get(fresh.id) || 0;
+            if (currentV > (fresh.version || 0)) {
+              return existing || fresh;
+            }
+            fileVersionsRef.current.set(fresh.id, fresh.version || 0);
+            return fresh;
+          });
+        });
         setMessages(data.messages);
         setOnlineUsers(data.online_users);
         // Update open tabs and active file
         setOpenTabs((prev) => {
           const updated = prev.map((tab) => {
             const fresh = data.files.find((f: ProjectFile) => f.id === tab.id);
-            return fresh || tab;
+            if (!fresh) return tab;
+            if (tab.unsaved) return tab;
+            const currentV = fileVersionsRef.current.get(tab.id) || 0;
+            if (currentV > (fresh.version || 0)) return tab;
+            return fresh;
           }).filter((tab) => data.files.some((f: ProjectFile) => f.id === tab.id));
           if (updated.length === 0 && data.files.length > 0) {
             return [data.files[0]];
@@ -247,7 +280,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
         });
         setActiveFile((prev) => {
           if (prev) {
+            if (prev.unsaved) return prev;
             const fresh = data.files.find((f: ProjectFile) => f.id === prev.id);
+            const currentV = fileVersionsRef.current.get(prev.id) || 0;
+            if (fresh && currentV > (fresh.version || 0)) return prev;
             if (fresh) return fresh;
           }
           return data.files.length > 0 ? data.files[0] : null;
@@ -375,12 +411,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       clearTimeout(debounceTimerRef.current);
     }
     debounceTimerRef.current = window.setTimeout(() => {
-      // Get current version from state
-      const currentFile = files.find((f) => f.id === fileId);
-      const version = currentFile?.version || 0;
+      // Get current version from ref, avoiding stale closures
+      const version = fileVersionsRef.current.get(fileId) || 0;
       wsRef.current?.sendCodeChange(fileId, content, version);
     }, 100);
-  }, [files]);
+  }, []);
 
   // Save active file to local computer (File System Access API with download fallback)
   const handleSaveActiveFileLocally = useCallback(async (fileToSave?: ProjectFile) => {

@@ -136,12 +136,13 @@ async def websocket_endpoint(
 
         room_id = room.id
         room_name = room.name
+        user_name = user.name or "Developer"
 
     finally:
         db.close()
 
     # Connect user to room
-    await manager.connect(code_normalized, websocket, user_id, user.name)
+    await manager.connect(code_normalized, websocket, user_id, user_name)
 
     # Broadcast presence
     online_users = manager.get_online_users(code_normalized)
@@ -150,7 +151,7 @@ async def websocket_endpoint(
         "room_code": code_normalized,
         "online_users": online_users,
         "event": "user_joined",
-        "user": {"id": user_id, "name": user.name}
+        "user": {"id": user_id, "name": user_name}
     })
 
     # Send initial welcome confirmation to the connecting user
@@ -159,7 +160,7 @@ async def websocket_endpoint(
         "room_code": code_normalized,
         "room_name": room_name,
         "online_users": online_users,
-        "user": {"id": user_id, "name": user.name}
+        "user": {"id": user_id, "name": user_name}
     })
 
     try:
@@ -172,30 +173,22 @@ async def websocket_endpoint(
 
             event_type = data.get("type")
 
-            # CODE CHANGE EVENT — with versioning
+            # CODE CHANGE EVENT — with monotonic versioning (Last-Write-Wins)
             if event_type == "code_change":
                 file_id = data.get("file_id")
-                content = data.get("content", "")
+                content = data.get("content")
+                if content is None:
+                    content = ""
                 client_version = data.get("version", 0)
 
                 if not file_id:
                     continue
 
-                # Reject stale events
-                if client_version > 0 and manager.is_stale_version(code_normalized, file_id, client_version):
-                    await manager.send_to_socket(websocket, {
-                        "type": "version_conflict",
-                        "file_id": file_id,
-                        "server_version": manager.get_file_version(code_normalized, file_id),
-                        "client_version": client_version,
-                    })
-                    continue
-
-                # Increment version
+                # Increment version monotonically
                 new_version = manager.increment_file_version(code_normalized, file_id)
                 event_id = manager.generate_event_id()
 
-                # Persist content to DB asynchronously in fresh session
+                # Persist content to DB in fresh session
                 try:
                     with SessionLocal() as file_db:
                         target_file = file_db.query(ProjectFile).filter(
@@ -203,12 +196,10 @@ async def websocket_endpoint(
                             ProjectFile.room_id == room_id
                         ).first()
                         if target_file:
-                            # Only update if new version is greater
-                            if new_version > target_file.version:
-                                target_file.content = content
-                                target_file.version = new_version
-                                target_file.updated_by = user_id
-                                file_db.commit()
+                            target_file.content = content
+                            target_file.version = new_version
+                            target_file.updated_by = user_id
+                            file_db.commit()
                 except Exception as e:
                     logger.error(f"Failed to persist file {file_id}: {e}")
 
@@ -222,7 +213,7 @@ async def websocket_endpoint(
                         "content": content,
                         "version": new_version,
                         "sender_id": user_id,
-                        "sender_name": user.name,
+                        "sender_name": user_name,
                         "timestamp": datetime.now(timezone.utc).isoformat()
                     },
                     exclude_socket=websocket
@@ -244,7 +235,7 @@ async def websocket_endpoint(
                         "type": "cursor_move",
                         "file_id": data.get("file_id"),
                         "sender_id": user_id,
-                        "sender_name": user.name,
+                        "sender_name": user_name,
                         "cursor": data.get("cursor"), # {lineNumber, column}
                         "selection": data.get("selection")
                     },
@@ -274,7 +265,7 @@ async def websocket_endpoint(
                             "type": "chat_message",
                             "id": msg_id,
                             "sender_id": user_id,
-                            "sender_name": user.name,
+                            "sender_name": user_name,
                             "message": msg_content,
                             "timestamp": created_at_iso
                         }
@@ -291,7 +282,7 @@ async def websocket_endpoint(
                         "type": "file_created",
                         "file": file_data,
                         "sender_id": user_id,
-                        "sender_name": user.name,
+                        "sender_name": user_name,
                         "event_id": manager.generate_event_id(),
                     },
                     exclude_socket=websocket
@@ -307,7 +298,7 @@ async def websocket_endpoint(
                         "file": file_data,
                         "file_id": file_data.get("id") or data.get("file_id"),
                         "sender_id": user_id,
-                        "sender_name": user.name,
+                        "sender_name": user_name,
                         "event_id": manager.generate_event_id(),
                     },
                     exclude_socket=websocket
@@ -324,7 +315,7 @@ async def websocket_endpoint(
                         "file_id": file_data.get("id") or data.get("file_id"),
                         "new_name": file_data.get("new_name") or file_data.get("name") or data.get("new_name"),
                         "sender_id": user_id,
-                        "sender_name": user.name,
+                        "sender_name": user_name,
                         "event_id": manager.generate_event_id(),
                     },
                     exclude_socket=websocket
@@ -343,7 +334,7 @@ async def websocket_endpoint(
                         "file_id": file_data.get("id") or data.get("file_id"),
                         "version": file_data.get("version") or data.get("version"),
                         "sender_id": user_id,
-                        "sender_name": user.name,
+                        "sender_name": user_name,
                         "event_id": manager.generate_event_id(),
                     },
                     exclude_socket=websocket
@@ -365,7 +356,7 @@ async def websocket_endpoint(
                 payload_out = {
                     "type": "signal",
                     "sender_id": user_id,
-                    "sender_name": user.name,
+                    "sender_name": user_name,
                     "signal": signal_data
                 }
                 if target_user_id:
@@ -380,7 +371,7 @@ async def websocket_endpoint(
                     {
                         "type": "execution_broadcast",
                         "sender_id": user_id,
-                        "sender_name": user.name,
+                        "sender_name": user_name,
                         "output": data.get("output"),
                         "status": data.get("status")
                     }
@@ -398,7 +389,7 @@ async def websocket_endpoint(
             "room_code": code_normalized,
             "online_users": online_users,
             "event": "user_left",
-            "user": {"id": user_id, "name": user.name}
+            "user": {"id": user_id, "name": user_name}
         })
     except Exception as e:
         logger.error(f"WebSocket error: {e}")

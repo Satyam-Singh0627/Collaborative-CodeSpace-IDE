@@ -35,7 +35,25 @@ export class CodeSpaceWebSocket {
     this.callbacks = callbacks;
   }
 
+  private cleanupSocket() {
+    this.cleanupTimers();
+    if (this.socket) {
+      this.socket.onopen = null;
+      this.socket.onmessage = null;
+      this.socket.onclose = null;
+      this.socket.onerror = null;
+      if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
+        this.socket.close();
+      }
+      this.socket = null;
+    }
+  }
+
   public connect() {
+    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    this.cleanupSocket();
     this.isExplicitDisconnect = false;
     this.callbacks.onStatusChange?.('connecting');
 
@@ -211,11 +229,7 @@ export class CodeSpaceWebSocket {
 
   public disconnect() {
     this.isExplicitDisconnect = true;
-    this.cleanupTimers();
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-    }
+    this.cleanupSocket();
     this.callbacks.onStatusChange?.('disconnected');
   }
 
@@ -224,8 +238,8 @@ export class CodeSpaceWebSocket {
     this.send({
       type: 'code_change',
       file_id: fileId,
-      content,
-      version,
+      content: content ?? '',
+      version: version ?? 0,
     });
   }
 

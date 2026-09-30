@@ -227,11 +227,13 @@ class LocalExecutionProvider(ExecutionProvider):
         tmp = tempfile.mkdtemp(prefix="codespace_")
         try:
             for f in files:
-                p = Path(tmp) / f["name"]
+                p = (Path(tmp) / f["name"]).resolve()
+                if not str(p).startswith(str(Path(tmp).resolve())):
+                    continue
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(f["content"], encoding="utf-8")
 
-            entry_path = Path(tmp) / entry_file
+            entry_path = (Path(tmp) / entry_file).resolve()
             if not entry_path.exists():
                 matching = list(Path(tmp).glob(f"*{info.get('ext', '')}"))
                 if matching:
@@ -248,6 +250,8 @@ class LocalExecutionProvider(ExecutionProvider):
             env["PYTHONPATH"] = str(tmp)
             env["NODE_PATH"] = str(tmp)
             env["PYTHONDONTWRITEBYTECODE"] = "1"
+            env["PYTHONUNBUFFERED"] = "1"
+            env["NODE_OPTIONS"] = "--max-old-space-size=256"
 
             proc = subprocess.run(
                 cmd,

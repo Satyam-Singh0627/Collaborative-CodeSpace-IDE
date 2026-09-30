@@ -478,8 +478,12 @@ def execute_tool(
     room_code: str = "",
     **kwargs
 ) -> str:
-    """Execute a single workspace tool by name."""
+    """Execute a single workspace tool by name with exception resilience."""
     tool_info = TOOL_REGISTRY.get(tool_name)
     if not tool_info or not tool_info.get("fn"):
         return f"Unknown tool: {tool_name}"
-    return tool_info["fn"](room_id, db, user_id=user_id, room_code=room_code, **kwargs)
+    try:
+        return tool_info["fn"](room_id, db, user_id=user_id, room_code=room_code, **kwargs)
+    except Exception as exc:
+        logger.error(f"Error executing tool {tool_name}: {exc}", exc_info=True)
+        return f"Error executing {tool_name}: {str(exc)}"

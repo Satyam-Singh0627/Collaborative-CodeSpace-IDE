@@ -1,6 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import FRONTEND_URL, ENVIRONMENT
+from .database import engine, Base
+from .routers import auth, rooms, ws, execution, ai
+
+# Create database tables automatically
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Collaborative CodeSpace API",
@@ -8,7 +13,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS for local development
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -23,6 +28,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register API Routers
+app.include_router(auth.router)
+app.include_router(rooms.router)
+app.include_router(ws.router)
+app.include_router(execution.router)
+app.include_router(ai.router)
+
 @app.get("/")
 def root():
     return {
@@ -36,10 +48,11 @@ def root():
 def health_check():
     return {
         "status": "healthy",
-        "timestamp": "2026-09-30T11:54:00Z",
         "services": {
             "api": "up",
             "websocket": "ready",
-            "database": "sqlite_ready"
+            "database": "sqlite_ready",
+            "execution": "ready",
+            "ai": "ready"
         }
     }

@@ -132,18 +132,20 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({
             <button
               onClick={handleCopy}
               title="Copy Output"
-              className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
+              aria-label="Copy Output"
+              className="h-7 w-7 min-w-[28px] flex items-center justify-center text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
             >
-              {copied ? <Check className="w-3 h-3 text-[#10b981]" /> : <Copy className="w-3 h-3" />}
+              {copied ? <Check className="w-4 h-4 text-[#10b981]" /> : <Copy className="w-4 h-4" />}
             </button>
           )}
 
           <button
             onClick={onClear}
             title="Clear Console"
-            className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
+            aria-label="Clear Console"
+            className="h-7 w-7 min-w-[28px] flex items-center justify-center text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
           >
-            <Trash2 className="w-3 h-3" />
+            <Trash2 className="w-4 h-4" />
           </button>
 
           <button

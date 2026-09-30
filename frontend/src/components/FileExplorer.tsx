@@ -100,22 +100,22 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   const getFileIcon = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase() || '';
-    if (ext === 'py' || ext === 'pyw') return <Code2 className="w-3.5 h-3.5 text-[#38bdf8] shrink-0" />;
-    if (['js', 'jsx', 'ts', 'tsx', 'mjs'].includes(ext)) return <FileCode className="w-3.5 h-3.5 text-[#fbbf24] shrink-0" />;
-    if (['c', 'cpp', 'cc', 'h', 'hpp'].includes(ext)) return <Code2 className="w-3.5 h-3.5 text-[#60a5fa] shrink-0" />;
-    if (ext === 'java') return <Code2 className="w-3.5 h-3.5 text-[#f87171] shrink-0" />;
-    if (ext === 'go') return <Code2 className="w-3.5 h-3.5 text-[#2dd4bf] shrink-0" />;
-    if (ext === 'rs') return <Code2 className="w-3.5 h-3.5 text-[#fb923c] shrink-0" />;
-    if (ext === 'php') return <Code2 className="w-3.5 h-3.5 text-[#a78bfa] shrink-0" />;
-    if (ext === 'rb') return <Code2 className="w-3.5 h-3.5 text-[#f43f5e] shrink-0" />;
-    if (ext === 'cs') return <Code2 className="w-3.5 h-3.5 text-[#10b981] shrink-0" />;
-    if (ext === 'kt' || ext === 'kts') return <Code2 className="w-3.5 h-3.5 text-[#a855f7] shrink-0" />;
-    if (['sh', 'bash', 'zsh'].includes(ext)) return <Code2 className="w-3.5 h-3.5 text-[#4ade80] shrink-0" />;
-    if (['html', 'htm'].includes(ext)) return <FileCode className="w-3.5 h-3.5 text-[#f97316] shrink-0" />;
-    if (['css', 'scss', 'sass'].includes(ext)) return <FileCode className="w-3.5 h-3.5 text-[#38bdf8] shrink-0" />;
-    if (ext === 'json') return <FileText className="w-3.5 h-3.5 text-[#eab308] shrink-0" />;
-    if (['md', 'markdown'].includes(ext)) return <FileText className="w-3.5 h-3.5 text-[#9a9ea8] shrink-0" />;
-    return <File className="w-3.5 h-3.5 text-[#606470] shrink-0" />;
+    if (ext === 'py' || ext === 'pyw') return <Code2 className="w-4 h-4 text-[#38bdf8] shrink-0" />;
+    if (['js', 'jsx', 'ts', 'tsx', 'mjs'].includes(ext)) return <FileCode className="w-4 h-4 text-[#fbbf24] shrink-0" />;
+    if (['c', 'cpp', 'cc', 'h', 'hpp'].includes(ext)) return <Code2 className="w-4 h-4 text-[#60a5fa] shrink-0" />;
+    if (ext === 'java') return <Code2 className="w-4 h-4 text-[#f87171] shrink-0" />;
+    if (ext === 'go') return <Code2 className="w-4 h-4 text-[#2dd4bf] shrink-0" />;
+    if (ext === 'rs') return <Code2 className="w-4 h-4 text-[#fb923c] shrink-0" />;
+    if (ext === 'php') return <Code2 className="w-4 h-4 text-[#a78bfa] shrink-0" />;
+    if (ext === 'rb') return <Code2 className="w-4 h-4 text-[#f43f5e] shrink-0" />;
+    if (ext === 'cs') return <Code2 className="w-4 h-4 text-[#10b981] shrink-0" />;
+    if (ext === 'kt' || ext === 'kts') return <Code2 className="w-4 h-4 text-[#a855f7] shrink-0" />;
+    if (['sh', 'bash', 'zsh'].includes(ext)) return <Code2 className="w-4 h-4 text-[#4ade80] shrink-0" />;
+    if (['html', 'htm'].includes(ext)) return <FileCode className="w-4 h-4 text-[#f97316] shrink-0" />;
+    if (['css', 'scss', 'sass'].includes(ext)) return <FileCode className="w-4 h-4 text-[#38bdf8] shrink-0" />;
+    if (ext === 'json') return <FileText className="w-4 h-4 text-[#eab308] shrink-0" />;
+    if (['md', 'markdown'].includes(ext)) return <FileText className="w-4 h-4 text-[#9a9ea8] shrink-0" />;
+    return <File className="w-4 h-4 text-[#606470] shrink-0" />;
   };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {

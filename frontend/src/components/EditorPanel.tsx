@@ -289,7 +289,11 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                 {getTabIcon(file.name)}
                 <span className="text-[11px] truncate max-w-[140px]">{file.name}</span>
                 {file.unsaved && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] group-hover:hidden"></span>
+                  <span
+                    className="w-2 h-2 rounded-full bg-[#38bdf8] shrink-0 shadow-xs"
+                    title="Unsaved changes (press Ctrl+S to save locally)"
+                    aria-label="Unsaved changes"
+                  />
                 )}
                 {openTabs.length > 1 && (
                   <button
@@ -298,9 +302,10 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                       onCloseTab(file.id);
                     }}
                     title="Close tab"
-                    className="p-0.5 text-[#606470] hover:text-white hover:bg-[#2b2d35] rounded transition opacity-0 group-hover:opacity-100 cursor-pointer"
+                    aria-label={`Close ${file.name}`}
+                    className="p-1 text-[#606470] hover:text-white hover:bg-[#2b2d35] rounded transition opacity-0 group-hover:opacity-100 cursor-pointer ml-0.5"
                   >
-                    <X className="w-2.5 h-2.5" />
+                    <X className="w-3 h-3" />
                   </button>
                 )}
               </div>
@@ -313,10 +318,11 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           {activeFile && onSaveFile && (
             <button
               onClick={() => onSaveFile(activeFile)}
-              title="Save File (Ctrl+S)"
-              className="p-1 hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
+              title="Save File to Disk (Ctrl+S)"
+              aria-label="Save File to Disk (Ctrl+S)"
+              className="p-1 hover:text-white hover:bg-[#202227] rounded transition cursor-pointer text-[#10b981]"
             >
-              <Save className="w-3.5 h-3.5 text-[#10b981]" />
+              <Save className="w-4 h-4 text-[#10b981]" />
             </button>
           )}
 

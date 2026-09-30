@@ -22,21 +22,29 @@
     --accent-amber: #f59e0b;
   }
 
+  /* CRITICAL: Prevent page-level scrolling — IDE is full viewport */
+  html, body {
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+  }
+
   body {
     background-color: var(--bg-workspace);
     color: var(--text-primary);
     font-family: var(--font-sans);
-    margin: 0;
-    padding: 0;
-    overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   #root {
-    min-height: 100vh;
+    height: 100vh;
+    max-height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     background-color: var(--bg-workspace);
   }
 

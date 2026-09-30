@@ -1,17 +1,30 @@
 import json
+import uuid
+import logging
 from typing import Dict, List, Any, Optional
 from fastapi import WebSocket
+
+logger = logging.getLogger("websocket_manager")
+
 
 class ConnectionManager:
     def __init__(self):
         # room_code -> list of dict: {"websocket": WebSocket, "user_id": str, "name": str}
         self.active_rooms: Dict[str, List[Dict[str, Any]]] = {}
+        # room_code -> {file_id: version} — monotonically increasing file versions
+        self.file_versions: Dict[str, Dict[str, int]] = {}
 
     async def connect(self, room_code: str, websocket: WebSocket, user_id: str, name: str):
         await websocket.accept()
         if room_code not in self.active_rooms:
             self.active_rooms[room_code] = []
-        
+
+        # Remove any stale connections from the same user (e.g. reconnect before disconnect detected)
+        self.active_rooms[room_code] = [
+            c for c in self.active_rooms[room_code]
+            if not (c["user_id"] == user_id and c["websocket"] != websocket)
+        ]
+
         # Append connection
         self.active_rooms[room_code].append({
             "websocket": websocket,
@@ -39,6 +52,34 @@ class ConnectionManager:
         for conn in self.active_rooms[room_code]:
             unique_users[conn["user_id"]] = conn["name"]
         return [{"user_id": uid, "name": uname} for uid, uname in unique_users.items()]
+
+    def get_file_version(self, room_code: str, file_id: str) -> int:
+        """Get current in-memory version for a file."""
+        return self.file_versions.get(room_code, {}).get(file_id, 0)
+
+    def set_file_version(self, room_code: str, file_id: str, version: int):
+        """Set the in-memory version for a file."""
+        if room_code not in self.file_versions:
+            self.file_versions[room_code] = {}
+        self.file_versions[room_code][file_id] = version
+
+    def increment_file_version(self, room_code: str, file_id: str) -> int:
+        """Atomically increment and return the new version for a file."""
+        if room_code not in self.file_versions:
+            self.file_versions[room_code] = {}
+        current = self.file_versions[room_code].get(file_id, 0)
+        new_version = current + 1
+        self.file_versions[room_code][file_id] = new_version
+        return new_version
+
+    def is_stale_version(self, room_code: str, file_id: str, incoming_version: int) -> bool:
+        """Check if an incoming version is older than the current version."""
+        current = self.get_file_version(room_code, file_id)
+        return incoming_version <= current
+
+    def generate_event_id(self) -> str:
+        """Generate a unique event ID."""
+        return str(uuid.uuid4())
 
     async def broadcast_to_room(self, room_code: str, message: dict, exclude_socket: Optional[WebSocket] = None):
         if room_code not in self.active_rooms:
@@ -68,5 +109,13 @@ class ConnectionManager:
                     await conn["websocket"].send_text(data_text)
                 except Exception:
                     pass
+
+    async def send_to_socket(self, websocket: WebSocket, message: dict):
+        """Send a message directly to a specific WebSocket connection."""
+        try:
+            await websocket.send_text(json.dumps(message))
+        except Exception:
+            logger.warning("Failed to send to socket")
+
 
 manager = ConnectionManager()

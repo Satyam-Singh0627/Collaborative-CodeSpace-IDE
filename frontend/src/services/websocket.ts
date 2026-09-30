@@ -1,4 +1,4 @@
-import type { OnlineUser } from '../types';
+import type { OnlineUser, ProjectFile, ChatMessage } from '../types';
 import { getWebSocketUrl } from '../config';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -6,10 +6,13 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 're
 export interface WebSocketCallbacks {
   onStatusChange?: (status: ConnectionStatus) => void;
   onPresenceUpdate?: (users: OnlineUser[], event?: string, user?: { id: string; name: string }) => void;
-  onCodeChange?: (data: { file_id: string; content: string; sender_id: string; sender_name: string }) => void;
+  onCodeChange?: (data: { file_id: string; content: string; version: number; sender_id: string; sender_name: string; event_id: string }) => void;
+  onVersionAck?: (data: { file_id: string; version: number; event_id: string }) => void;
+  onVersionConflict?: (data: { file_id: string; server_version: number; client_version: number }) => void;
   onCursorMove?: (data: { file_id: string; sender_id: string; sender_name: string; cursor: { lineNumber: number; column: number }; selection?: unknown }) => void;
   onChatMessage?: (data: { id: string; sender_id: string; sender_name: string; message: string; timestamp: string }) => void;
-  onFileEvent?: (data: { type: string; file?: unknown }) => void;
+  onFileEvent?: (data: { type: string; file?: unknown; sender_id?: string; sender_name?: string }) => void;
+  onResync?: (data: { files: ProjectFile[]; messages: ChatMessage[]; online_users: OnlineUser[] }) => void;
   onSignal?: (data: { sender_id: string; sender_name: string; signal: unknown }) => void;
   onExecutionBroadcast?: (data: { sender_id: string; sender_name: string; output: string; status: string }) => void;
 }
@@ -20,10 +23,11 @@ export class CodeSpaceWebSocket {
   private token: string;
   private callbacks: WebSocketCallbacks;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
+  private maxReconnectAttempts = 10;
   private reconnectTimer: number | null = null;
   private pingInterval: number | null = null;
   private isExplicitDisconnect = false;
+  private hasConnectedBefore = false;
 
   constructor(roomCode: string, token: string, callbacks: WebSocketCallbacks) {
     this.roomCode = roomCode.toUpperCase().trim();
@@ -42,8 +46,15 @@ export class CodeSpaceWebSocket {
       this.socket = new WebSocket(wsUrl);
 
       this.socket.onopen = () => {
+        const wasReconnect = this.hasConnectedBefore;
         this.reconnectAttempts = 0;
+        this.hasConnectedBefore = true;
         this.callbacks.onStatusChange?.('connected');
+
+        // On reconnect, request full state resynchronization
+        if (wasReconnect) {
+          this.send({ type: 'resync' });
+        }
 
         // Setup ping keep-alive
         this.pingInterval = window.setInterval(() => {
@@ -92,8 +103,26 @@ export class CodeSpaceWebSocket {
         this.callbacks.onCodeChange?.({
           file_id: data.file_id,
           content: data.content,
+          version: data.version ?? 0,
           sender_id: data.sender_id,
           sender_name: data.sender_name,
+          event_id: data.event_id ?? '',
+        });
+        break;
+
+      case 'version_ack':
+        this.callbacks.onVersionAck?.({
+          file_id: data.file_id,
+          version: data.version,
+          event_id: data.event_id,
+        });
+        break;
+
+      case 'version_conflict':
+        this.callbacks.onVersionConflict?.({
+          file_id: data.file_id,
+          server_version: data.server_version,
+          client_version: data.client_version,
         });
         break;
 
@@ -121,6 +150,14 @@ export class CodeSpaceWebSocket {
       case 'file_deleted':
       case 'file_renamed':
         this.callbacks.onFileEvent?.(data);
+        break;
+
+      case 'resync':
+        this.callbacks.onResync?.({
+          files: data.files || [],
+          messages: data.messages || [],
+          online_users: data.online_users || [],
+        });
         break;
 
       case 'signal':
@@ -154,7 +191,7 @@ export class CodeSpaceWebSocket {
 
     this.reconnectAttempts++;
     this.callbacks.onStatusChange?.('reconnecting');
-    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 8000);
+    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 15000);
 
     this.reconnectTimer = window.setTimeout(() => {
       this.connect();
@@ -183,11 +220,12 @@ export class CodeSpaceWebSocket {
   }
 
   // Outgoing senders
-  public sendCodeChange(fileId: string, content: string) {
+  public sendCodeChange(fileId: string, content: string, version: number) {
     this.send({
       type: 'code_change',
       file_id: fileId,
       content,
+      version,
     });
   }
 
@@ -228,6 +266,10 @@ export class CodeSpaceWebSocket {
       output,
       status,
     });
+  }
+
+  public sendResync() {
+    this.send({ type: 'resync' });
   }
 
   private send(data: unknown) {

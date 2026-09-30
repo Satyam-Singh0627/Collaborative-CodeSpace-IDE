@@ -1,4 +1,4 @@
-import type { User, Room, ProjectFile, ChatMessage, ExecutionResult } from '../types';
+import type { User, Room, ProjectFile, ChatMessage, ExecutionResult, AIToolCall } from '../types';
 import { API_BASE } from '../config';
 
 function getAuthHeaders(token?: string | null): HeadersInit {
@@ -50,12 +50,12 @@ export const api = {
     return res.json();
   },
 
-  // Rooms API
-  async createRoom(name: string, language = 'python'): Promise<Room> {
+  // Rooms API — language removed from create (auto-detected per file)
+  async createRoom(name: string): Promise<Room> {
     const res = await fetch(`${API_BASE}/rooms`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ name, language }),
+      body: JSON.stringify({ name }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -98,11 +98,11 @@ export const api = {
     return res.json();
   },
 
-  async createFile(roomCode: string, name: string, language = 'python', content = ''): Promise<ProjectFile> {
+  async createFile(roomCode: string, name: string, language?: string, content = ''): Promise<ProjectFile> {
     const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomCode)}/files`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ name, language, content }),
+      body: JSON.stringify({ name, language: language || undefined, content }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -111,7 +111,7 @@ export const api = {
     return res.json();
   },
 
-  async updateFile(roomCode: string, fileId: string, updates: { name?: string; content?: string; language?: string }): Promise<ProjectFile> {
+  async updateFile(roomCode: string, fileId: string, updates: { name?: string; content?: string; language?: string; version?: number }): Promise<ProjectFile> {
     const res = await fetch(`${API_BASE}/rooms/${encodeURIComponent(roomCode)}/files/${fileId}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
@@ -201,6 +201,35 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'AI Assistant service unavailable');
+    }
+    return res.json();
+  },
+
+  // AI Agent — tool-use agentic mode
+  async askAIAgent(
+    prompt: string,
+    roomCode: string,
+    activeFile?: string,
+    chatHistory: { role: string; content: string }[] = [],
+  ): Promise<{
+    steps: { thought?: string; tool_calls: AIToolCall[]; response?: string }[];
+    final_response: string;
+    model_used: string;
+    files_modified: string[];
+  }> {
+    const res = await fetch(`${API_BASE}/ai/agent`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        prompt,
+        room_code: roomCode,
+        active_file: activeFile || undefined,
+        chat_history: chatHistory.length > 0 ? chatHistory : undefined,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'AI Agent service unavailable');
     }
     return res.json();
   },

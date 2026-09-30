@@ -12,6 +12,10 @@ import {
   Trash2,
   Bot,
   User,
+  Wrench,
+  FileCode,
+  ToggleLeft,
+  ToggleRight,
 } from 'lucide-react';
 import type { AIChatTurn } from '../types';
 import { api } from '../services/api';
@@ -23,6 +27,8 @@ interface AIAssistantPanelProps {
   activeFileName?: string;
   lastError?: string;
   projectFiles?: string[];
+  roomCode?: string;
+  onFilesModified?: () => void;
 }
 
 export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
@@ -32,12 +38,15 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
   activeFileName = '',
   lastError = '',
   projectFiles = [],
+  roomCode = '',
+  onFilesModified,
 }) => {
   const [messages, setMessages] = useState<AIChatTurn[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [lastFailedAction, setLastFailedAction] = useState<{ action: string; prompt: string } | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<string | null>(null);
+  const [agentMode, setAgentMode] = useState(true); // true = agent with tools, false = chat-only
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll chat to bottom on new messages
@@ -78,28 +87,83 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
     }));
 
     try {
-      const res = await api.askAI(
-        action,
-        codeToAnalyze,
-        language,
-        promptText || userTurn.content,
-        lastError,
-        activeFileName,
-        projectFiles,
-        historyPayload,
-      );
+      // Use Agent mode if enabled and roomCode is available
+      if (agentMode && roomCode) {
+        const res = await api.askAIAgent(
+          promptText || userTurn.content,
+          roomCode,
+          activeFileName,
+          historyPayload,
+        );
 
-      const aiTurn: AIChatTurn = {
-        id: `ai-${Date.now()}`,
-        role: 'assistant',
-        content: res.result,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        modelUsed: res.model_used,
-        action: res.action,
-        isError: res.model_used === 'unconfigured' || res.model_used === 'service-unavailable',
-      };
+        // Build rich response with tool call details
+        let displayContent = '';
+        const allToolCalls: AIChatTurn['toolCalls'] = [];
 
-      setMessages((prev) => [...prev, aiTurn]);
+        for (const step of res.steps) {
+          if (step.thought) {
+            displayContent += `💭 *${step.thought}*\n\n`;
+          }
+          for (const tc of step.tool_calls) {
+            allToolCalls.push({
+              tool: tc.tool,
+              args: tc.args as Record<string, unknown>,
+              result: tc.result ?? undefined,
+            });
+            displayContent += `🔧 **${tc.tool}**(${Object.entries(tc.args).map(([k, v]) => `${k}="${typeof v === 'string' && v.length > 50 ? v.slice(0, 50) + '…' : v}"`).join(', ')})\n`;
+            if (tc.result) {
+              displayContent += `→ ${tc.result}\n`;
+            }
+            displayContent += '\n';
+          }
+        }
+
+        if (res.final_response) {
+          displayContent += res.final_response;
+        }
+
+        const aiTurn: AIChatTurn = {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: displayContent.trim() || res.final_response || 'Agent completed.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          modelUsed: res.model_used,
+          toolCalls: allToolCalls,
+          filesModified: res.files_modified,
+          isError: res.model_used === 'unconfigured' || res.model_used === 'service-unavailable',
+        };
+
+        setMessages((prev) => [...prev, aiTurn]);
+
+        // If files were modified, notify parent to refresh
+        if (res.files_modified.length > 0 && onFilesModified) {
+          onFilesModified();
+        }
+      } else {
+        // Standard chat-only mode
+        const res = await api.askAI(
+          action,
+          codeToAnalyze,
+          language,
+          promptText || userTurn.content,
+          lastError,
+          activeFileName,
+          projectFiles,
+          historyPayload,
+        );
+
+        const aiTurn: AIChatTurn = {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: res.result,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          modelUsed: res.model_used,
+          action: res.action,
+          isError: res.model_used === 'unconfigured' || res.model_used === 'service-unavailable',
+        };
+
+        setMessages((prev) => [...prev, aiTurn]);
+      }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Failed to connect to AI Assistant.';
       setLastFailedAction({ action, prompt: promptText });
@@ -146,6 +210,26 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {/* Agent mode toggle */}
+          <button
+            onClick={() => setAgentMode((prev) => !prev)}
+            title={agentMode ? 'Agent Mode: Tools enabled (can modify files)' : 'Chat Mode: Analysis only'}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#111215] border border-[#2b2d35] text-[10px] font-medium transition cursor-pointer hover:bg-[#202227]"
+          >
+            {agentMode ? (
+              <>
+                <ToggleRight className="w-3 h-3 text-[#10b981]" />
+                <Wrench className="w-2.5 h-2.5 text-[#10b981]" />
+                <span className="text-[#10b981]">Agent</span>
+              </>
+            ) : (
+              <>
+                <ToggleLeft className="w-3 h-3 text-[#9a9ea8]" />
+                <span className="text-[#9a9ea8]">Chat</span>
+              </>
+            )}
+          </button>
+
           {messages.length > 0 && (
             <button
               onClick={() => setMessages([])}
@@ -215,9 +299,13 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
         {messages.length === 0 && !loading && (
           <div className="h-full flex flex-col items-center justify-center text-center p-4 text-[#606470]">
             <Sparkles className="w-8 h-8 stroke-1 text-[#2b2d35] mb-2" />
-            <p className="text-xs font-medium text-[#9a9ea8] mb-1">Dynamic AI Pair Programmer</p>
+            <p className="text-xs font-medium text-[#9a9ea8] mb-1">
+              {agentMode ? 'AI Agent — Workspace Tools' : 'AI Pair Programmer'}
+            </p>
             <p className="text-[11px] text-[#606470] max-w-[220px] leading-relaxed">
-              Ask natural-language questions, analyze errors, explain architecture, or generate code with full workspace context.
+              {agentMode
+                ? 'Ask the AI to create files, modify code, run programs, and debug issues directly in your workspace.'
+                : 'Ask natural-language questions, analyze errors, explain architecture, or generate code with full workspace context.'}
             </p>
           </div>
         )}
@@ -239,7 +327,7 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
                 ) : (
                   <>
                     <Bot className="w-3 h-3 text-[#8b5cf6]" />
-                    <span className="font-semibold text-[#8b5cf6]">AI Assistant</span>
+                    <span className="font-semibold text-[#8b5cf6]">AI {turn.toolCalls?.length ? 'Agent' : 'Assistant'}</span>
                     {turn.modelUsed && turn.modelUsed !== 'unconfigured' && (
                       <span className="font-mono text-[9px] bg-[#111215] px-1 rounded text-[#606470]">
                         {turn.modelUsed}
@@ -273,6 +361,30 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
                   </button>
                 )}
 
+                {/* Tool calls badge */}
+                {!isUser && turn.toolCalls && turn.toolCalls.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1">
+                    {turn.toolCalls.map((tc, i) => (
+                      <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#202227] border border-[#2b2d35] text-[10px] font-mono text-[#10b981]">
+                        <Wrench className="w-2.5 h-2.5" />
+                        {tc.tool}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Files modified badge */}
+                {!isUser && turn.filesModified && turn.filesModified.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1">
+                    {turn.filesModified.map((fname, i) => (
+                      <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#10b981]/10 border border-[#10b981]/30 text-[10px] font-mono text-[#10b981]">
+                        <FileCode className="w-2.5 h-2.5" />
+                        {fname}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
                 <div className="whitespace-pre-wrap font-sans break-words pr-4">
                   {turn.content}
                 </div>
@@ -284,7 +396,9 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
         {loading && (
           <div className="flex items-center gap-2 p-3 bg-[#111215] rounded border border-[#2b2d35] text-[#9a9ea8]">
             <RefreshCw className="w-4 h-4 text-[#8b5cf6] animate-spin shrink-0" />
-            <span className="text-[11px]">Analyzing code & generating response...</span>
+            <span className="text-[11px]">
+              {agentMode ? 'Agent working on workspace...' : 'Analyzing code & generating response...'}
+            </span>
           </div>
         )}
 
@@ -308,7 +422,10 @@ export const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({
       <form onSubmit={handleChatSubmit} className="p-2.5 border-t border-[#2b2d35] bg-[#111215] flex items-center gap-1.5">
         <input
           type="text"
-          placeholder="Ask AI (e.g. 'Why is this error occurring?', 'Convert to C++')..."
+          placeholder={agentMode
+            ? "Ask AI to create files, fix bugs, run code..."
+            : "Ask AI (e.g. 'Why is this error occurring?', 'Convert to C++')..."
+          }
           value={customPrompt}
           onChange={(e) => setCustomPrompt(e.target.value)}
           disabled={loading}

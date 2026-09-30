@@ -36,11 +36,14 @@ export interface ProjectFile {
   name: string;
   language: string;
   content: string;
+  version: number;
   updated_at: string;
   isLocal?: boolean;
   unsaved?: boolean;
   fileHandle?: any;
 }
+
+export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
 
 export interface ChatMessage {
   id: string;
@@ -80,6 +83,14 @@ export interface AIChatTurn {
   modelUsed?: string;
   action?: string;
   isError?: boolean;
+  toolCalls?: AIToolCall[];
+  filesModified?: string[];
+}
+
+export interface AIToolCall {
+  tool: string;
+  args: Record<string, unknown>;
+  result?: string;
 }
 
 export interface LanguageInfo {

@@ -17,7 +17,7 @@ import { ChatPanel } from './ChatPanel';
 import { AIAssistantPanel } from './AIAssistantPanel';
 import { VideoCallPanel } from './VideoCallPanel';
 import { OutputPanel } from './OutputPanel';
-import { SUPPORTED_LANGUAGES, getLanguageFromFileName, detectRequiresStdin } from '../utils/languages';
+import { SUPPORTED_LANGUAGES, getLanguageFromFileName } from '../utils/languages';
 import { openLocalFile, openLocalFolder, saveActiveFileLocally, saveProjectLocally } from '../utils/fileSystem';
 
 interface WorkspaceProps {
@@ -36,7 +36,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
   const [remoteCursors, setRemoteCursors] = useState<CursorPosition[]>([]);
   const [selectedText, setSelectedText] = useState('');
   const [lastError, setLastError] = useState('');
-  const [stdin, setStdin] = useState('');
+  const [runTrigger, setRunTrigger] = useState(0);
+  const [broadcastResult, setBroadcastResult] = useState<{ output: string; status: ExecutionResult['status'] } | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   
   // Connection & UI states
@@ -45,13 +46,6 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
   const [activeRightTab, setActiveRightTab] = useState<'chat' | 'ai'>('ai');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Execution state
-  const [execResult, setExecResult] = useState<ExecutionResult>({
-    status: 'idle',
-    output: '',
-  });
-  const [isRunning, setIsRunning] = useState(false);
 
   // Video call states
   const [inCall, setInCall] = useState(false);
@@ -295,7 +289,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
         }
       },
       onExecutionBroadcast: (data) => {
-        setExecResult({
+        setBroadcastResult({
           status: data.status as ExecutionResult['status'],
           output: `[Broadcast from ${data.sender_name}]:\n${data.output}`,
         });
@@ -323,55 +317,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
     };
   }, [roomCode, token, user, loading]);
 
-  // Code Execution Handler — sends all project files for multi-file project support
-  const handleRunCode = async () => {
-    if (!activeFile) return;
-    setIsRunning(true);
-    setExecResult({ status: 'running', output: 'Compiling and executing in sandbox environment...' });
-
-    try {
-      const projectFiles = files
-        .filter((f) => !f.name.endsWith('.md'))
-        .map((f) => ({
-          name: f.name,
-          content: f.id === activeFile.id || f.name === activeFile.name ? activeFile.content : f.content,
-        }));
-
-      if (!projectFiles.some((f) => f.name === activeFile.name)) {
-        projectFiles.unshift({ name: activeFile.name, content: activeFile.content });
-      }
-
-      const res = await api.executeCode(
-        activeFile.language,
-        projectFiles,
-        activeFile.name,
-        stdin,
-      );
-      setExecResult(res);
-      setLastError(res.status === 'error' || res.status === 'compile_error' ? res.output : '');
-      wsRef.current?.sendExecutionBroadcast(res.output, res.status);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Execution failed.';
-      setExecResult({ status: 'error', output: msg });
-      setLastError(msg);
-    } finally {
-      setIsRunning(false);
-    }
-  };
-
-  // Keyboard shortcut: Ctrl/Cmd + Enter to Run
+  // Keyboard shortcut: Ctrl/Cmd + Enter to Run active code in terminal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
-        if (!isRunning && activeFile) {
-          handleRunCode();
-        }
+        setRunTrigger((prev) => prev + 1);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isRunning, activeFile, files, stdin]);
+  }, []);
 
   // Select a file & open tab
   const handleSelectFile = (file: ProjectFile) => {
@@ -837,14 +793,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
 
           {/* Run Code Button */}
           <button
-            onClick={handleRunCode}
-            disabled={isRunning || !activeFile}
+            onClick={() => setRunTrigger((prev) => prev + 1)}
+            disabled={!activeFile}
             title="Execute Code in Sandbox (Ctrl+Enter)"
             aria-label="Execute Code in Sandbox (Ctrl+Enter)"
             className="h-8 px-3.5 bg-[#10b981] hover:bg-[#059669] text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
           >
-            <Play className={`w-4 h-4 fill-current ${isRunning ? 'animate-pulse' : ''}`} />
-            <span>{isRunning ? 'Running…' : 'Run'}</span>
+            <Play className="w-4 h-4 fill-current" />
+            <span>Run</span>
           </button>
         </div>
       </header>
@@ -881,14 +837,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           />
 
           <OutputPanel
-            result={execResult}
-            onRun={handleRunCode}
-            onClear={() => setExecResult({ status: 'idle', output: '' })}
-            isRunning={isRunning}
-            stdin={stdin}
-            onStdinChange={(val) => setStdin(val)}
-            language={activeFile?.language || 'python'}
-            requiresStdin={detectRequiresStdin(activeFile?.content || '', activeFile?.language || activeFile?.name || '')}
+            activeFile={activeFile}
+            files={files}
+            token={token || undefined}
+            runTrigger={runTrigger}
+            broadcastResult={broadcastResult}
+            onExecutionDone={(result) => {
+              if (result.status === 'error' || result.status === 'compile_error') {
+                setLastError(result.output);
+              }
+              wsRef.current?.sendExecutionBroadcast(result.output, result.status);
+            }}
           />
         </div>
 

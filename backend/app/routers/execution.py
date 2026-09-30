@@ -2,6 +2,8 @@ import sys
 import os
 import re
 import time
+import json
+import asyncio
 import base64
 import tempfile
 import subprocess
@@ -10,18 +12,19 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query
 import httpx
 
 from ..models import User
 from ..schemas import CodeRunRequest, CodeRunResponse
-from ..auth import get_current_user
+from ..auth import get_current_user, decode_access_token
 from ..config import PISTON_API_URL, JUDGE0_API_URL, EXECUTION_PROVIDER
 
 logger = logging.getLogger("execution")
 router = APIRouter(prefix="/api/execute", tags=["Code Execution"])
 
 TIMEOUT_SECONDS = 10
+INTERACTIVE_TIMEOUT_SECONDS = 300
 MAX_OUTPUT_LENGTH = 15000
 
 # ---------------------------------------------------------------------------
@@ -641,3 +644,263 @@ def get_supported_languages():
         }
         for k, v in LANGUAGE_REGISTRY.items()
     ]
+
+
+@router.websocket("/ws")
+async def execute_interactive_ws(
+    websocket: WebSocket,
+    token: Optional[str] = Query(None),
+):
+    """
+    Interactive Real-Time Terminal Execution WebSocket.
+    Supports real-time stdout/stderr chunk streaming and live bidirectional stdin piping.
+    """
+    await websocket.accept()
+
+    current_proc: Optional[asyncio.subprocess.Process] = None
+    current_tmp: Optional[str] = None
+    stream_tasks: List[asyncio.Task] = []
+
+    async def cleanup_proc():
+        nonlocal current_proc, current_tmp, stream_tasks
+        for t in stream_tasks:
+            t.cancel()
+        stream_tasks = []
+        if current_proc and current_proc.returncode is None:
+            try:
+                current_proc.terminate()
+                await asyncio.sleep(0.05)
+                if current_proc.returncode is None:
+                    current_proc.kill()
+            except Exception:
+                pass
+            current_proc = None
+        if current_tmp:
+            shutil.rmtree(current_tmp, ignore_errors=True)
+            current_tmp = None
+
+    try:
+        while True:
+            msg_text = await websocket.receive_text()
+            try:
+                msg = json.loads(msg_text)
+            except Exception:
+                continue
+
+            msg_type = msg.get("type")
+
+            # 1. START EXECUTION
+            if msg_type == "start":
+                await cleanup_proc()
+
+                language = msg.get("language", "python")
+                files = msg.get("files", [])
+                entry_file = msg.get("entry_file", "main.py")
+
+                lang_key = _normalise(language)
+                if lang_key not in LANGUAGE_REGISTRY:
+                    supported = ", ".join(info["name"] for info in LANGUAGE_REGISTRY.values())
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Language '{language}' is not supported.\nSupported: {supported}\n"
+                    })
+                    continue
+
+                info = LANGUAGE_REGISTRY[lang_key]
+
+                if not files:
+                    code = msg.get("code", "")
+                    files = [{"name": entry_file or info["entry_default"], "content": code}]
+
+                entry_file = entry_file or files[0]["name"]
+                start_time = time.time()
+
+                if _can_run_locally(lang_key) and (EXECUTION_PROVIDER in ("local", "auto")):
+                    cmd_fn = info.get("local_cmd")
+                    current_tmp = tempfile.mkdtemp(prefix="codespace_")
+                    tmp_path = Path(current_tmp)
+
+                    for f in files:
+                        p = (tmp_path / f["name"]).resolve()
+                        if not str(p).startswith(str(tmp_path.resolve())):
+                            continue
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        p.write_text(f["content"], encoding="utf-8")
+
+                    entry_path = (tmp_path / entry_file).resolve()
+                    if not entry_path.exists():
+                        matching = list(tmp_path.glob(f"*{info.get('ext', '')}"))
+                        if matching:
+                            entry_path = matching[0]
+                        else:
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": f"Entry file '{entry_file}' not found.\n"
+                            })
+                            await cleanup_proc()
+                            continue
+
+                    cmd = cmd_fn(entry_path)
+                    if lang_key == "python":
+                        cmd = [sys.executable, "-u", str(entry_path)]
+
+                    env = os.environ.copy()
+                    env["PYTHONPATH"] = str(tmp_path)
+                    env["NODE_PATH"] = str(tmp_path)
+                    env["PYTHONUNBUFFERED"] = "1"
+                    env["PYTHONIOENCODING"] = "utf-8"
+                    env["PYTHONDONTWRITEBYTECODE"] = "1"
+                    env["NODE_OPTIONS"] = "--max-old-space-size=256"
+
+                    try:
+                        current_proc = await asyncio.create_subprocess_exec(
+                            *cmd,
+                            stdin=asyncio.subprocess.PIPE,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            cwd=current_tmp,
+                            env=env,
+                        )
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": f"Failed to start execution process: {e}\n"
+                        })
+                        await cleanup_proc()
+                        continue
+
+                    cmd_display = f"{info['name'].lower()} {entry_file}"
+                    await websocket.send_json({
+                        "type": "started",
+                        "command": f"$ {cmd_display}",
+                        "language": lang_key,
+                    })
+
+                    active_tmp = current_tmp
+
+                    async def stream_stdout(proc: asyncio.subprocess.Process, tmp_dir: str):
+                        try:
+                            while True:
+                                chunk = await proc.stdout.read(1024)
+                                if not chunk:
+                                    break
+                                text = chunk.decode("utf-8", errors="replace")
+                                sanitized = _sanitize_output(text, tmp_dir=tmp_dir)
+                                await websocket.send_json({
+                                    "type": "stdout",
+                                    "data": sanitized
+                                })
+                        except Exception:
+                            pass
+
+                    async def stream_stderr(proc: asyncio.subprocess.Process, tmp_dir: str):
+                        try:
+                            while True:
+                                chunk = await proc.stderr.read(1024)
+                                if not chunk:
+                                    break
+                                text = chunk.decode("utf-8", errors="replace")
+                                sanitized = _sanitize_output(text, tmp_dir=tmp_dir)
+                                await websocket.send_json({
+                                    "type": "stderr",
+                                    "data": sanitized
+                                })
+                        except Exception:
+                            pass
+
+                    t_out = asyncio.create_task(stream_stdout(current_proc, active_tmp))
+                    t_err = asyncio.create_task(stream_stderr(current_proc, active_tmp))
+                    stream_tasks = [t_out, t_err]
+
+                    async def monitor_completion(proc: asyncio.subprocess.Process, tmp_dir: str, start_t: float):
+                        try:
+                            await asyncio.wait_for(proc.wait(), timeout=INTERACTIVE_TIMEOUT_SECONDS)
+                            await asyncio.gather(t_out, t_err, return_exceptions=True)
+                            elapsed = round(time.time() - start_t, 3)
+                            exit_code = proc.returncode
+                            await websocket.send_json({
+                                "type": "done",
+                                "status": "success" if exit_code == 0 else "error",
+                                "exit_code": exit_code,
+                                "execution_time": elapsed,
+                            })
+                        except asyncio.TimeoutError:
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                            await websocket.send_json({
+                                "type": "done",
+                                "status": "timeout",
+                                "exit_code": -1,
+                                "execution_time": INTERACTIVE_TIMEOUT_SECONDS,
+                                "message": f"\n[Execution timed out ({INTERACTIVE_TIMEOUT_SECONDS}s limit)]\n"
+                            })
+                        finally:
+                            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+                    asyncio.create_task(monitor_completion(current_proc, active_tmp, start_time))
+
+                else:
+                    cmd_display = f"{info['name'].lower()} {entry_file}"
+                    await websocket.send_json({
+                        "type": "started",
+                        "command": f"$ {cmd_display}",
+                        "language": lang_key,
+                    })
+                    stdin_init = msg.get("stdin", "")
+                    if EXECUTION_PROVIDER == "piston":
+                        res = await piston_provider.execute(lang_key, files, entry_file, stdin_init)
+                    elif EXECUTION_PROVIDER == "judge0":
+                        res = await judge0_provider.execute(lang_key, files, entry_file, stdin_init)
+                    else:
+                        res = await judge0_provider.execute(lang_key, files, entry_file, stdin_init)
+                        if res.status == "error" and ("not supported" in res.output.lower() or "not configured" in res.output.lower()):
+                            res = await piston_provider.execute(lang_key, files, entry_file, stdin_init)
+
+                    if res.output:
+                        await websocket.send_json({
+                            "type": "stdout" if res.status == "success" else "stderr",
+                            "data": res.output + "\n"
+                        })
+                    await websocket.send_json({
+                        "type": "done",
+                        "status": res.status,
+                        "exit_code": 0 if res.status == "success" else 1,
+                        "execution_time": res.execution_time,
+                    })
+
+            # 2. STDIN INPUT
+            elif msg_type == "stdin":
+                if current_proc and current_proc.returncode is None and current_proc.stdin:
+                    input_data = msg.get("data", "")
+                    if not input_data.endswith("\n"):
+                        input_data += "\n"
+                    try:
+                        current_proc.stdin.write(input_data.encode("utf-8"))
+                        await current_proc.stdin.drain()
+                    except Exception as e:
+                        logger.warning(f"Failed to write stdin to process: {e}")
+
+            # 3. STOP PROCESS
+            elif msg_type == "stop":
+                if current_proc and current_proc.returncode is None:
+                    try:
+                        current_proc.terminate()
+                        await asyncio.sleep(0.05)
+                        if current_proc.returncode is None:
+                            current_proc.kill()
+                    except Exception:
+                        pass
+                    await websocket.send_json({
+                        "type": "stopped",
+                        "message": "\n[Process terminated by user]\n"
+                    })
+                await cleanup_proc()
+
+    except WebSocketDisconnect:
+        await cleanup_proc()
+    except Exception as exc:
+        logger.error(f"Interactive execution websocket error: {exc}", exc_info=True)
+        await cleanup_proc()
+

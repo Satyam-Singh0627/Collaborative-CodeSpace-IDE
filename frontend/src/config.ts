@@ -65,4 +65,40 @@ export function getWebSocketUrl(roomCode: string, token: string): string {
   return `${protocol}//${host}${path}`;
 }
 
+/**
+ * Resolves the WebSocket URL for live interactive code execution.
+ */
+export function getExecutionWebSocketUrl(token?: string): string {
+  const activeToken = token || localStorage.getItem('codespace_token') || '';
+  const query = activeToken ? `?token=${encodeURIComponent(activeToken)}` : '';
+  const path = `/api/execute/ws${query}`;
+
+  const explicitWs = (import.meta.env.VITE_WS_URL || '').trim();
+  if (explicitWs) {
+    const cleanWs = explicitWs.replace(/\/+$/, '').replace(/\/ws\/?$/, '');
+    return `${cleanWs}${path}`;
+  }
+
+  const apiUrl = (import.meta.env.VITE_API_URL || '').trim();
+  if (apiUrl) {
+    let base = apiUrl.replace(/\/+$/, '');
+    if (base.endsWith('/api')) {
+      base = base.slice(0, -4);
+    }
+    const wsBase = base
+      .replace(/^http:\/\//i, 'ws://')
+      .replace(/^https:\/\//i, 'wss://');
+    return `${wsBase}${path}`;
+  }
+
+  if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || !window.location.hostname.includes('localhost'))) {
+    return `wss://collaborative-codespace-ide.onrender.com${path}`;
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  return `${protocol}//${host}${path}`;
+}
+
 export const API_BASE = getApiBaseUrl();
+

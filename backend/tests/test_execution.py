@@ -144,3 +144,150 @@ def test_supported_languages_list(client, auth_headers):
     langs = res.json()
     assert any(l["key"] == "python" for l in langs)
     assert any(l["key"] == "javascript" for l in langs)
+
+
+def test_interactive_websocket_stdin_piping(client, auth_headers):
+    """
+    Test real-time interactive terminal stdin piping via WebSocket:
+    name = input("Enter name: ")
+    age = input("Enter age: ")
+    print(f"{name} is {age} years old")
+    """
+    token = auth_headers["Authorization"].split(" ")[1]
+    with client.websocket_connect(f"/api/execute/ws?token={token}") as ws:
+        # Start execution
+        ws.send_json({
+            "type": "start",
+            "language": "python",
+            "files": [
+                {
+                    "name": "main.py",
+                    "content": (
+                        'name = input("Enter name: ")\n'
+                        'age = input("Enter age: ")\n'
+                        'print(f"{name} is {age} years old")\n'
+                    ),
+                }
+            ],
+            "entry_file": "main.py",
+        })
+
+        # Wait for started message
+        msg1 = ws.receive_json()
+        assert msg1["type"] == "started"
+
+        # Read until we get "Enter name: " prompt
+        collected_out = ""
+        while "Enter name:" not in collected_out:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected_out += chunk["data"]
+
+        # Send first stdin
+        ws.send_json({"type": "stdin", "data": "Satyam\n"})
+
+        # Read until we get "Enter age: " prompt
+        while "Enter age:" not in collected_out:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected_out += chunk["data"]
+
+        # Send second stdin
+        ws.send_json({"type": "stdin", "data": "21\n"})
+
+        # Read until done
+        status_done = None
+        while True:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected_out += chunk["data"]
+            elif chunk["type"] == "done":
+                status_done = chunk
+                break
+
+        assert status_done is not None
+        assert status_done["status"] == "success"
+        assert "Satyam is 21 years old" in collected_out
+
+
+def test_interactive_websocket_student_grade_manager(client, auth_headers):
+    """
+    Test interactive menu loop (Student Grade Manager) with multiple input() iterations:
+    Add student -> Show all -> Exit
+    """
+    code = """
+students = {}
+while True:
+    print("\\n===== STUDENT GRADE MANAGER =====")
+    print("1. Add Student")
+    print("2. Show All Students")
+    print("3. Exit")
+    choice = input("Enter your choice: ").strip()
+    if choice == "1":
+        name = input("Enter student name: ").strip()
+        marks = input("Enter marks: ").strip()
+        students[name] = marks
+        print("Student added successfully")
+    elif choice == "2":
+        for k, v in students.items():
+            print(f"{k}: {v}")
+    elif choice == "3":
+        print("Goodbye!")
+        break
+"""
+    token = auth_headers["Authorization"].split(" ")[1]
+    with client.websocket_connect(f"/api/execute/ws?token={token}") as ws:
+        ws.send_json({
+            "type": "start",
+            "language": "python",
+            "files": [{"name": "main.py", "content": code}],
+            "entry_file": "main.py",
+        })
+
+        msg1 = ws.receive_json()
+        assert msg1["type"] == "started"
+
+        collected = ""
+        # Wait for menu prompt
+        while "Enter your choice:" not in collected:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected += chunk["data"]
+
+        # Choice 1: Add student
+        ws.send_json({"type": "stdin", "data": "1\n"})
+        while "Enter student name:" not in collected:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected += chunk["data"]
+
+        ws.send_json({"type": "stdin", "data": "Satyam\n"})
+        while "Enter marks:" not in collected:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected += chunk["data"]
+
+        ws.send_json({"type": "stdin", "data": "95\n"})
+        while "Student added successfully" not in collected:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected += chunk["data"]
+
+        # Choice 2: Show all
+        ws.send_json({"type": "stdin", "data": "2\n"})
+        while "Satyam: 95" not in collected:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected += chunk["data"]
+
+        # Choice 3: Exit
+        ws.send_json({"type": "stdin", "data": "3\n"})
+        while True:
+            chunk = ws.receive_json()
+            if chunk["type"] == "stdout":
+                collected += chunk["data"]
+            elif chunk["type"] == "done":
+                break
+
+        assert "Goodbye!" in collected
+

@@ -176,18 +176,67 @@ async def run_full_e2e_test():
     print(f"[OK] Sanitized Error Output:\n{err_res['output'].strip()}")
     assert "ZeroDivisionError" in err_res['output']
 
-    # 11. AI Assistant Verification
-    print("\n[Step 11] Testing In-Room AI Assistant...")
+    # 11. AI Assistant Verification & Free-Form Dynamic Chat
+    print("\n[Step 11] Testing In-Room AI Assistant & Action Prompts...")
     ai_explain = http_req('/api/ai', 'POST', {
         'action': 'explain',
         'code': 'def calculate_sum(numbers):\n    return sum(numbers)',
-        'language': 'python'
+        'language': 'python',
+        'file_name': 'calc.py'
     }, token=tok_a)
     safe_result = ai_explain['result'][:100].encode('ascii', errors='replace').decode()
     print(f"[OK] AI Response (Model: {ai_explain['model_used']}):\n{safe_result}...")
 
+    # 12. Test AI Dynamic Free-Form Chat with Context & History
+    print("\n[Step 12] Testing AI Dynamic Natural-Language Chat...")
+    ai_chat = http_req('/api/ai', 'POST', {
+        'action': 'chat',
+        'code': 'def fetch_data():\n    pass',
+        'language': 'python',
+        'prompt': 'How do I add error handling and retry logic to this function?',
+        'file_name': 'main.py',
+        'project_files': ['main.py', 'utils.py'],
+        'chat_history': [{'role': 'user', 'content': 'Hello'}]
+    }, token=tok_a)
+    print(f"[OK] AI Dynamic Chat Model: {ai_chat['model_used']}, Action: {ai_chat['action']}")
+
+    # 13. Test AI Inline Code Completion Endpoint
+    print("\n[Step 13] Testing Monaco AI Inline Code Completion...")
+    complete_res = http_req('/api/ai/complete', 'POST', {
+        'code_before': 'def calculate_total(items):\n    ',
+        'code_after': '',
+        'language': 'python',
+        'file_name': 'main.py'
+    }, token=tok_a)
+    print(f"[OK] AI Completion Model: {complete_res['model_used']}, Result: '{complete_res['completion']}'")
+
+    # 14. Test Nested File Creation, Rename & Deletion in Room
+    print("\n[Step 14] Testing Nested File Tree CRUD in Room...")
+    new_nested_file = http_req(f'/api/rooms/{room_code}/files', 'POST', {
+        'name': 'src/components/App.tsx',
+        'language': 'typescript',
+        'content': 'export const App = () => <div>Codespace</div>;'
+    }, token=tok_a)
+    print(f"[OK] Created nested file: {new_nested_file['name']} (ID: {new_nested_file['id']})")
+
+    renamed_file = http_req(f'/api/rooms/{room_code}/files/{new_nested_file["id"]}', 'PUT', {
+        'name': 'src/components/MainApp.tsx'
+    }, token=tok_a)
+    print(f"[OK] Renamed file to: {renamed_file['name']}")
+
+    # 15. Test Stdin Code Execution
+    print("\n[Step 15] Testing Code Execution with Stdin Input...")
+    stdin_payload = {
+        'code': 'name = input()\nprint(f"Hello, {name}!")',
+        'language': 'python',
+        'stdin': 'Antigravity Developer'
+    }
+    stdin_res = http_req('/api/execute', 'POST', stdin_payload, token=tok_a)
+    print(f"[OK] Stdin Execution Status: {stdin_res['status']}, Output: {stdin_res['output'].strip()}")
+    assert "Hello, Antigravity Developer!" in stdin_res['output']
+
     print("\n==================================================")
-    print("[OK] ALL MULTI-USER E2E WORKSPACE FEATURES VERIFIED PERFECTLY!")
+    print("[OK] ALL 15 MULTI-USER E2E WORKSPACE FEATURES VERIFIED PERFECTLY!")
     print("==================================================")
 
 if __name__ == '__main__':

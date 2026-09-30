@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.main import app
 from app.database import SessionLocal, Base, engine
-from app.models import User, Room, ProjectFile, RoomMember
+from app.models import User, Room, RoomMember
 from app.routers.ws import _detect_language
 from app.websocket_manager import manager
 from app.services.ai_agent import (
@@ -338,11 +338,11 @@ def test_ai_agent_tools(db_session: Session):
     update_res = execute_tool("update_file", room.id, db_session, filename="agent_test.py", content="print('updated content')")
     assert "Updated file" in update_res
 
-    # Verify update in DB
-    updated_file = db_session.query(ProjectFile).filter(ProjectFile.room_id == room.id, ProjectFile.name == "agent_test.py").first()
+    # Verify update in memory store
+    updated_file = manager.get_room_file_by_name(room.room_code, "agent_test.py")
     assert updated_file is not None
-    assert updated_file.content == "print('updated content')"
-    assert updated_file.version >= 2
+    assert updated_file["content"] == "print('updated content')"
+    assert updated_file["version"] >= 2
 
     # 5. Rename file tool
     rename_res = execute_tool("rename_file", room.id, db_session, old_name="agent_test.py", new_name="agent_renamed.py")
@@ -352,8 +352,8 @@ def test_ai_agent_tools(db_session: Session):
     delete_res = execute_tool("delete_file", room.id, db_session, filename="agent_renamed.py")
     assert "Deleted file" in delete_res
 
-    # Verify deletion in DB
-    deleted = db_session.query(ProjectFile).filter(ProjectFile.room_id == room.id, ProjectFile.name == "agent_renamed.py").first()
+    # Verify deletion in memory store
+    deleted = manager.get_room_file_by_name(room.room_code, "agent_renamed.py")
     assert deleted is None
 
 

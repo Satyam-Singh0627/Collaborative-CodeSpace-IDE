@@ -12,11 +12,8 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import DATABASE_URL
-from app.database import Base
-from app.models import (  # noqa: F401 — ensure all models are imported for autogenerate
-    User, Room, RoomMember, ProjectFile, Message, ExecutionLog,
-    AIConversation, AIMessage,
-)
+from app.database import Base, engine
+from app.models import User, Room, RoomMember  # noqa: F401
 
 config = context.config
 
@@ -43,13 +40,8 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode — connects to the database."""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-    with connectable.connect() as connection:
+    """Run migrations in 'online' mode — connects using the application's engine."""
+    with engine.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

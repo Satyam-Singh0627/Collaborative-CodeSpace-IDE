@@ -4,7 +4,8 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..models import User, Room, ProjectFile
+from ..models import User, Room
+from ..websocket_manager import manager
 from ..auth import get_current_user
 from ..database import get_db, SessionLocal
 from ..config import AI_API_KEY, AI_MODEL, AI_PROVIDER
@@ -303,9 +304,9 @@ async def ai_agent_endpoint(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # Get current file list
-    files = db.query(ProjectFile).filter(ProjectFile.room_id == room.id).all()
-    file_names = [f.name for f in files]
+    # Get current file list from in-memory room store
+    files = manager.get_room_files(code_normalized)
+    file_names = [f["name"] for f in files]
 
     # Build agent system prompt
     sys_prompt = build_agent_system_prompt(file_names)
@@ -313,9 +314,9 @@ async def ai_agent_endpoint(
     # Build user prompt with context
     user_parts = [f"User request: {req.prompt}"]
     if req.active_file:
-        active = next((f for f in files if f.name == req.active_file), None)
+        active = next((f for f in files if f["name"] == req.active_file), None)
         if active:
-            user_parts.append(f"\nActive file: {active.name}\n```{active.language}\n{active.content}\n```")
+            user_parts.append(f"\nActive file: {active['name']}\n```{active.get('language', 'plaintext')}\n{active.get('content', '')}\n```")
 
     if req.chat_history:
         user_parts.append("\nPrevious conversation:")

@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
-from ..models import Room, ProjectFile
+from ..models import Room
 from ..websocket_manager import manager
 
 logger = logging.getLogger("ai_agent")
@@ -45,75 +45,62 @@ def _detect_language(filename: str) -> str:
     return _EXT_LANG_MAP.get(parts[-1].lower(), "plaintext")
 
 
+def _resolve_room_code(room_id: str, db: Session, room_code: str = "") -> str:
+    if room_code:
+        return room_code.upper().strip()
+    room = db.query(Room).filter((Room.id == room_id) | (Room.room_code == room_id)).first()
+    if room:
+        return room.room_code
+    return room_id.upper().strip()
+
+
 # ---------------------------------------------------------------------------
 # Tool implementations — each receives db session + room context
 # ---------------------------------------------------------------------------
 
-def tool_list_files(room_id: str, db: Session, **kwargs) -> str:
+def tool_list_files(room_id: str, db: Session, room_code: str = "", **kwargs) -> str:
     """List all files in the room."""
-    files = db.query(ProjectFile).filter(ProjectFile.room_id == room_id).all()
+    code = _resolve_room_code(room_id, db, room_code)
+    files = manager.get_room_files(code)
     if not files:
         return "No files found in this room."
-    lines = [f"- {f.name} ({f.language}, v{f.version})" for f in files]
+    lines = [f"- {f['name']} ({f.get('language', 'plaintext')}, v{f.get('version', 1)})" for f in files]
     return "Files in room:\n" + "\n".join(lines)
 
 
-def tool_read_file(room_id: str, db: Session, *, filename: str, **kwargs) -> str:
+def tool_read_file(room_id: str, db: Session, *, filename: str, room_code: str = "", **kwargs) -> str:
     """Read the content of a specific file."""
-    f = db.query(ProjectFile).filter(
-        ProjectFile.room_id == room_id,
-        ProjectFile.name == filename
-    ).first()
+    code = _resolve_room_code(room_id, db, room_code)
+    f = manager.get_room_file_by_name(code, filename)
     if not f:
         return f"Error: File '{filename}' not found."
-    return f"=== {f.name} (v{f.version}, {f.language}) ===\n{f.content}"
+    return f"=== {f['name']} (v{f.get('version', 1)}, {f.get('language', 'plaintext')}) ===\n{f.get('content', '')}"
 
 
 def tool_create_file(room_id: str, db: Session, *, filename: str, content: str = "",
                      user_id: str = "", room_code: str = "", **kwargs) -> str:
     """Create a new file in the room."""
-    existing = db.query(ProjectFile).filter(
-        ProjectFile.room_id == room_id,
-        ProjectFile.name == filename
-    ).first()
+    code = _resolve_room_code(room_id, db, room_code)
+    existing = manager.get_room_file_by_name(code, filename)
     if existing:
         return f"Error: File '{filename}' already exists. Use update_file to modify it."
 
     language = _detect_language(filename)
-    parts = filename.rsplit("/", 1)
-    parent_path = parts[0] if len(parts) > 1 else ""
-
-    new_file = ProjectFile(
-        room_id=room_id,
-        name=filename,
-        parent_path=parent_path,
-        language=language,
-        content=content,
-        version=1,
-        created_by=user_id,
-        updated_by=user_id,
-    )
-    db.add(new_file)
-    db.commit()
-    db.refresh(new_file)
+    new_file = manager.add_room_file(code, {
+        "name": filename,
+        "language": language,
+        "content": content,
+    })
 
     # Broadcast via WebSocket
-    if room_code:
+    if code:
         import asyncio
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                loop.create_task(manager.broadcast_to_room(room_code, {
+                loop.create_task(manager.broadcast_to_room(code, {
                     "type": "file_created",
-                    "file": {
-                        "id": new_file.id,
-                        "room_id": new_file.room_id,
-                        "name": new_file.name,
-                        "language": new_file.language,
-                        "content": new_file.content,
-                        "version": new_file.version,
-                        "updated_at": new_file.updated_at.isoformat() if new_file.updated_at else None,
-                    },
+                    "file": new_file,
                     "sender_id": "ai-agent",
                     "sender_name": "AI Agent",
                     "event_id": manager.generate_event_id(),
@@ -121,38 +108,30 @@ def tool_create_file(room_id: str, db: Session, *, filename: str, content: str =
         except Exception as e:
             logger.warning(f"Failed to broadcast file_created: {e}")
 
-    manager.set_file_version(room_code, new_file.id, 1)
     return f"Created file '{filename}' ({language}, v1)"
 
 
 def tool_update_file(room_id: str, db: Session, *, filename: str, content: str,
                      user_id: str = "", room_code: str = "", **kwargs) -> str:
     """Update the content of an existing file."""
-    f = db.query(ProjectFile).filter(
-        ProjectFile.room_id == room_id,
-        ProjectFile.name == filename
-    ).first()
+    code = _resolve_room_code(room_id, db, room_code)
+    f = manager.get_room_file_by_name(code, filename)
     if not f:
         return f"Error: File '{filename}' not found. Use create_file to create it first."
 
-    f.content = content
-    f.version += 1
-    f.updated_by = user_id
-    db.commit()
-    db.refresh(f)
+    updated = manager.update_room_file(code, f["id"], content=content)
+    new_version = updated["version"]
 
     # Broadcast via WebSocket
-    if room_code:
-        new_version = f.version
-        manager.set_file_version(room_code, f.id, new_version)
+    if code:
         import asyncio
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                loop.create_task(manager.broadcast_to_room(room_code, {
+                loop.create_task(manager.broadcast_to_room(code, {
                     "type": "code_change",
                     "event_id": manager.generate_event_id(),
-                    "file_id": f.id,
+                    "file_id": f["id"],
                     "content": content,
                     "version": new_version,
                     "sender_id": "ai-agent",
@@ -161,29 +140,26 @@ def tool_update_file(room_id: str, db: Session, *, filename: str, content: str,
         except Exception as e:
             logger.warning(f"Failed to broadcast code_change: {e}")
 
-    return f"Updated file '{filename}' to v{f.version}"
+    return f"Updated file '{filename}' to v{new_version}"
 
 
 def tool_delete_file(room_id: str, db: Session, *, filename: str,
                      room_code: str = "", **kwargs) -> str:
     """Delete a file from the room."""
-    f = db.query(ProjectFile).filter(
-        ProjectFile.room_id == room_id,
-        ProjectFile.name == filename
-    ).first()
+    code = _resolve_room_code(room_id, db, room_code)
+    f = manager.get_room_file_by_name(code, filename)
     if not f:
         return f"Error: File '{filename}' not found."
 
-    file_id = f.id
-    db.delete(f)
-    db.commit()
+    file_id = f["id"]
+    manager.delete_room_file(code, file_id)
 
-    if room_code:
+    if code:
         import asyncio
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                loop.create_task(manager.broadcast_to_room(room_code, {
+                loop.create_task(manager.broadcast_to_room(code, {
                     "type": "file_deleted",
                     "file": {"fileId": file_id, "name": filename},
                     "sender_id": "ai-agent",
@@ -199,43 +175,27 @@ def tool_delete_file(room_id: str, db: Session, *, filename: str,
 def tool_rename_file(room_id: str, db: Session, *, old_name: str, new_name: str,
                      user_id: str = "", room_code: str = "", **kwargs) -> str:
     """Rename a file."""
-    f = db.query(ProjectFile).filter(
-        ProjectFile.room_id == room_id,
-        ProjectFile.name == old_name
-    ).first()
+    code = _resolve_room_code(room_id, db, room_code)
+    f = manager.get_room_file_by_name(code, old_name)
     if not f:
         return f"Error: File '{old_name}' not found."
 
     # Check if new name already exists
-    existing = db.query(ProjectFile).filter(
-        ProjectFile.room_id == room_id,
-        ProjectFile.name == new_name
-    ).first()
+    existing = manager.get_room_file_by_name(code, new_name)
     if existing:
         return f"Error: File '{new_name}' already exists."
 
-    f.name = new_name
-    f.language = _detect_language(new_name)
-    parts = new_name.rsplit("/", 1)
-    f.parent_path = parts[0] if len(parts) > 1 else ""
-    f.version += 1
-    f.updated_by = user_id
-    db.commit()
-    db.refresh(f)
+    lang = _detect_language(new_name)
+    updated = manager.update_room_file(code, f["id"], name=new_name, language=lang)
 
-    if room_code:
+    if code:
         import asyncio
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                loop.create_task(manager.broadcast_to_room(room_code, {
+                loop.create_task(manager.broadcast_to_room(code, {
                     "type": "file_renamed",
-                    "file": {
-                        "id": f.id, "room_id": f.room_id, "name": f.name,
-                        "language": f.language, "content": f.content,
-                        "version": f.version,
-                        "updated_at": f.updated_at.isoformat() if f.updated_at else None,
-                    },
+                    "file": updated,
                     "sender_id": "ai-agent",
                     "sender_name": "AI Agent",
                     "event_id": manager.generate_event_id(),
@@ -243,7 +203,7 @@ def tool_rename_file(room_id: str, db: Session, *, old_name: str, new_name: str,
         except Exception as e:
             logger.warning(f"Failed to broadcast file_renamed: {e}")
 
-    return f"Renamed '{old_name}' to '{new_name}' ({f.language})"
+    return f"Renamed '{old_name}' to '{new_name}' ({lang})"
 
 
 # ---------------------------------------------------------------------------
@@ -425,13 +385,10 @@ async def execute_agent_tools(
             elif tool_name == "run_code":
                 filename = args.get("filename", "")
                 if execution_fn and filename:
-                    # Read file content from DB
-                    f = db.query(ProjectFile).filter(
-                        ProjectFile.room_id == room_id,
-                        ProjectFile.name == filename
-                    ).first()
+                    code = _resolve_room_code(room_id, db, room_code)
+                    f = manager.get_room_file_by_name(code, filename)
                     if f:
-                        exec_result = await execution_fn(f.language, f.name, f.content)
+                        exec_result = await execution_fn(f.get("language", "python"), f["name"], f.get("content", ""))
                         results.append({
                             "tool": "run_code",
                             "args": args,

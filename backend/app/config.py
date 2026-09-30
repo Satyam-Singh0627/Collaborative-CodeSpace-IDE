@@ -28,7 +28,15 @@ _default_local_origins = [
 ]
 ALLOWED_ORIGINS = list(dict.fromkeys(_default_local_origins + _configured_origins))
 
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/codespace.db")
+# Database Configuration
+_default_db_path = BASE_DIR / "codespace.db"
+_raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{_default_db_path}")
+
+# Normalize postgres:// to postgresql:// for SQLAlchemy / Render / Heroku compatibility
+if _raw_db_url.startswith("postgres://"):
+    _raw_db_url = _raw_db_url.replace("postgres://", "postgresql://", 1)
+
+DATABASE_URL = _raw_db_url
 
 JWT_SECRET = os.getenv("JWT_SECRET", "codespace-dev-insecure-secret-key-change-in-prod-12345")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")

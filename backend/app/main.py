@@ -4,8 +4,10 @@ from .config import ALLOWED_ORIGINS, ENVIRONMENT, DATABASE_URL
 from .database import engine, Base
 from .routers import auth, rooms, ws, execution, ai
 
-# Create database tables automatically
-Base.metadata.create_all(bind=engine)
+# In development with local SQLite fallback, ensure initial tables exist if not already migrated.
+# In production (PostgreSQL), schema is strictly managed via Alembic migrations.
+if DATABASE_URL.startswith("sqlite"):
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Collaborative CodeSpace API",

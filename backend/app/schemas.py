@@ -109,12 +109,19 @@ class CodeRunResponse(BaseModel):
     execution_time: float  # seconds
 
 # AI Assistant Schemas
+class AIChatMessage(BaseModel):
+    role: str = "user"  # "user" or "assistant"
+    content: str
+
 class AIRequest(BaseModel):
     action: str = Field(..., description="'explain', 'bug_detect', 'improve', 'generate', or 'chat'")
-    code: str = Field("", max_length=15000)
+    code: str = Field("", max_length=50000)
     language: Optional[str] = "python"
+    file_name: Optional[str] = None
     prompt: Optional[str] = ""
     error_output: Optional[str] = ""
+    project_files: Optional[List[str]] = None
+    chat_history: Optional[List[AIChatMessage]] = None
 
 class AIResponse(BaseModel):
     action: str
@@ -122,8 +129,8 @@ class AIResponse(BaseModel):
     model_used: str
 
 class AICompletionRequest(BaseModel):
-    code_before: str = Field(..., max_length=8000)
-    code_after: str = Field("", max_length=4000)
+    code_before: str = Field(..., max_length=12000)
+    code_after: str = Field("", max_length=6000)
     language: str = "python"
     file_name: str = ""
 

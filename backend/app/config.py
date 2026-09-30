@@ -20,9 +20,11 @@ JWT_SECRET = os.getenv("JWT_SECRET", "codespace-dev-insecure-secret-key-change-i
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
-AI_API_KEY = os.getenv("AI_API_KEY", "")
+AI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("AI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini")
 AI_MODEL = os.getenv("AI_MODEL", "gemini-2.0-flash")
 
-# Code execution via Piston (public sandbox API, no key required)
+# Code execution settings (supports 'piston', 'judge0', or 'auto')
+EXECUTION_PROVIDER = os.getenv("EXECUTION_PROVIDER", "auto")
 PISTON_API_URL = os.getenv("PISTON_API_URL", "https://emkc.org/api/v2/piston")
+JUDGE0_API_URL = os.getenv("JUDGE0_API_URL", "https://ce.judge0.com/submissions?wait=true&base64_encoded=true")

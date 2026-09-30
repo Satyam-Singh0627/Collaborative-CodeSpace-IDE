@@ -257,12 +257,12 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   const getTabIcon = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase() || '';
     if (['py', 'pyw', 'c', 'cpp', 'java', 'go', 'rs', 'php', 'rb', 'cs', 'kt', 'sh'].includes(ext)) {
-      return <Code2 className="w-3 h-3 text-[#10b981]" />;
+      return <Code2 className="w-3.5 h-3.5 text-[#10b981] shrink-0" />;
     }
     if (['js', 'jsx', 'ts', 'tsx', 'html', 'css'].includes(ext)) {
-      return <FileCode className="w-3 h-3 text-[#fbbf24]" />;
+      return <FileCode className="w-3.5 h-3.5 text-[#fbbf24] shrink-0" />;
     }
-    return <FileText className="w-3 h-3 text-[#9a9ea8]" />;
+    return <FileText className="w-3.5 h-3.5 text-[#9a9ea8] shrink-0" />;
   };
 
   const filteredQuickFiles = files.filter((f) =>
@@ -272,7 +272,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   return (
     <div className="flex-1 flex flex-col h-full bg-[#111215] overflow-hidden relative">
       {/* File Tabs Bar */}
-      <div className="h-8 bg-[#17181c] border-b border-[#2b2d35] flex items-center justify-between overflow-x-auto select-none px-2 gap-1">
+      <div className="h-9 bg-[#17181c] border-b border-[#2b2d35] flex items-center justify-between overflow-x-auto select-none px-2 gap-1 shrink-0">
         <div className="flex items-center gap-1 overflow-x-auto">
           {openTabs.map((file) => {
             const isActive = file.id === activeFile?.id;
@@ -280,7 +280,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
               <div
                 key={file.id}
                 onClick={() => onSelectFile(file)}
-                className={`group h-6 px-2.5 flex items-center gap-1.5 rounded-t text-xs font-mono border-t border-x cursor-pointer transition ${
+                className={`group h-7 px-2.5 flex items-center gap-1.5 rounded-t text-xs font-mono border-t border-x cursor-pointer transition ${
                   isActive
                     ? 'bg-[#111215] text-white border-[#2b2d35] border-b-[#111215] font-medium'
                     : 'bg-[#17181c] text-[#9a9ea8] border-transparent hover:text-white hover:bg-[#1e2026]'
@@ -320,38 +320,41 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
               onClick={() => onSaveFile(activeFile)}
               title="Save File to Disk (Ctrl+S)"
               aria-label="Save File to Disk (Ctrl+S)"
-              className="p-1 hover:text-white hover:bg-[#202227] rounded transition cursor-pointer text-[#10b981]"
+              className="h-8 w-8 min-w-[32px] flex items-center justify-center text-[#10b981] hover:text-[#34d399] hover:bg-[#202227] rounded transition cursor-pointer"
             >
-              <Save className="w-4 h-4 text-[#10b981]" />
+              <Save className="w-[18px] h-[18px]" />
             </button>
           )}
 
           <button
             onClick={() => setWordWrap((prev) => (prev === 'on' ? 'off' : 'on'))}
             title={`Word Wrap: ${wordWrap}`}
-            className={`p-1 rounded transition cursor-pointer ${
+            aria-label={`Toggle Word Wrap: currently ${wordWrap}`}
+            className={`h-8 w-8 min-w-[32px] flex items-center justify-center rounded transition cursor-pointer ${
               wordWrap === 'on' ? 'text-[#10b981] bg-[#1e2026]' : 'hover:text-white hover:bg-[#202227]'
             }`}
           >
-            <WrapText className="w-3.5 h-3.5" />
+            <WrapText className="w-[18px] h-[18px]" />
           </button>
 
           <button
             onClick={() => setMinimap((prev) => !prev)}
             title={`Minimap: ${minimap ? 'Enabled' : 'Disabled'}`}
-            className={`p-1 rounded transition cursor-pointer ${
+            aria-label={`Toggle Minimap: currently ${minimap ? 'enabled' : 'disabled'}`}
+            className={`h-8 w-8 min-w-[32px] flex items-center justify-center rounded transition cursor-pointer ${
               minimap ? 'text-[#10b981] bg-[#1e2026]' : 'hover:text-white hover:bg-[#202227]'
             }`}
           >
-            <Map className="w-3.5 h-3.5" />
+            <Map className="w-[18px] h-[18px]" />
           </button>
 
           <button
             onClick={() => setShowQuickOpen(true)}
             title="Quick Open File (Ctrl+P)"
-            className="p-1 hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
+            aria-label="Quick Open File (Ctrl+P)"
+            className="h-8 w-8 min-w-[32px] flex items-center justify-center hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
           >
-            <Search className="w-3.5 h-3.5" />
+            <Search className="w-[18px] h-[18px]" />
           </button>
         </div>
       </div>

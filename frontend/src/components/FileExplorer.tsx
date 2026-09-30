@@ -282,16 +282,17 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         <span className="truncate max-w-[110px] text-white">{roomName}</span>
 
         {/* Header Action Buttons */}
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1">
           <button
             onClick={() => {
               setIsCreatingFile(true);
               setIsCreatingFolder(false);
             }}
             title="New File"
-            className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
+            aria-label="Create New File"
+            className="h-8 w-8 min-w-[32px] flex items-center justify-center text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
           >
-            <FilePlus className="w-3.5 h-3.5" />
+            <FilePlus className="w-[18px] h-[18px]" />
           </button>
 
           <button
@@ -300,18 +301,20 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
               setIsCreatingFile(false);
             }}
             title="New Folder"
-            className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
+            aria-label="Create New Folder"
+            className="h-8 w-8 min-w-[32px] flex items-center justify-center text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
           >
-            <FolderPlus className="w-3.5 h-3.5" />
+            <FolderPlus className="w-[18px] h-[18px]" />
           </button>
 
           {onOpenLocalFolder && (
             <button
               onClick={onOpenLocalFolder}
               title="Open Local Folder"
-              className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
+              aria-label="Open Local Folder"
+              className="h-8 w-8 min-w-[32px] flex items-center justify-center text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
             >
-              <FolderInput className="w-3.5 h-3.5" />
+              <FolderInput className="w-[18px] h-[18px]" />
             </button>
           )}
 
@@ -319,9 +322,10 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
             <button
               onClick={onOpenLocalFile}
               title="Open Local File"
-              className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
+              aria-label="Open Local File"
+              className="h-8 w-8 min-w-[32px] flex items-center justify-center text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
             >
-              <Upload className="w-3.5 h-3.5" />
+              <Upload className="w-[18px] h-[18px]" />
             </button>
           )}
 
@@ -329,9 +333,10 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
             <button
               onClick={onRefresh}
               title="Refresh Workspace"
-              className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
+              aria-label="Refresh Workspace Files"
+              className="h-8 w-8 min-w-[32px] flex items-center justify-center text-[#9a9ea8] hover:text-white hover:bg-[#262830] rounded transition cursor-pointer"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className="w-[18px] h-[18px]" />
             </button>
           )}
         </div>

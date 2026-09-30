@@ -72,3 +72,40 @@ export function isExecutableLanguage(fileNameOrKey: string): boolean {
   const lang = SUPPORTED_LANGUAGES.find((l) => l.key === langKey || l.key === fileNameOrKey);
   return lang?.isRunnable ?? false;
 }
+
+/**
+ * Detect if source code contains patterns requiring standard input (stdin).
+ */
+export function detectRequiresStdin(code: string, languageOrFileName: string): boolean {
+  if (!code || typeof code !== 'string') return false;
+  const langKey = SUPPORTED_LANGUAGES.some((l) => l.key === languageOrFileName)
+    ? languageOrFileName.toLowerCase()
+    : getLanguageFromFileName(languageOrFileName).toLowerCase();
+
+  switch (langKey) {
+    case 'python':
+      return /\b(input\s*\(|sys\.stdin\b)/.test(code);
+    case 'javascript':
+    case 'typescript':
+      return /\b(readline|prompt\s*\(|process\.stdin\b)/.test(code);
+    case 'c':
+    case 'cpp':
+      return /\b(scanf\s*\(|cin\s*>>|getline\s*\(|getchar\s*\(|fgets\s*\(.*stdin\b)/.test(code);
+    case 'java':
+      return /\b(Scanner\b.*System\.in|System\.console\(\)\.readLine|BufferedReader\b.*InputStreamReader\b)/.test(code);
+    case 'go':
+      return /\b(fmt\.Scan|bufio\.NewReader\(os\.Stdin\)|os\.Stdin\b)/.test(code);
+    case 'rust':
+      return /\b(io::stdin|stdin\(\))/.test(code);
+    case 'ruby':
+      return /\b(gets|readline)\b/.test(code);
+    case 'php':
+      return /\b(readline\s*\(|fgets\s*\(\s*STDIN\s*\))/.test(code);
+    case 'csharp':
+      return /\bConsole\.Read/.test(code);
+    case 'bash':
+      return /\bread\s+/.test(code);
+    default:
+      return /\binput\s*\(/.test(code);
+  }
+}

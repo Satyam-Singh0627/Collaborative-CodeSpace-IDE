@@ -23,6 +23,8 @@ function MainApp() {
       const hash = window.location.hash.replace('#', '').trim().toUpperCase();
       if (hash && hash.startsWith('ROOM-')) {
         setActiveRoomCode(hash);
+      } else {
+        setActiveRoomCode(null);
       }
     };
 
@@ -48,7 +50,7 @@ function MainApp() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#0d1117] text-[#c9d1d9] font-sans">
+    <div className="flex flex-col h-screen overflow-hidden bg-[#0d1117] text-[#c9d1d9] font-sans">
       {/* Top Navbar */}
       <Navbar
         onOpenAuth={handleOpenAuth}
@@ -60,7 +62,7 @@ function MainApp() {
           if (!isAuthenticated) handleOpenAuth('login');
           else setJoinRoomOpen(true);
         }}
-        inRoom={!!activeRoomCode}
+        inRoom={Boolean(activeRoomCode && isAuthenticated)}
       />
 
       {/* Main Content Area */}

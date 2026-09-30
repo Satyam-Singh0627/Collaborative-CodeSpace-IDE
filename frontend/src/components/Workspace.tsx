@@ -17,7 +17,7 @@ import { ChatPanel } from './ChatPanel';
 import { AIAssistantPanel } from './AIAssistantPanel';
 import { VideoCallPanel } from './VideoCallPanel';
 import { OutputPanel } from './OutputPanel';
-import { SUPPORTED_LANGUAGES, getLanguageFromFileName } from '../utils/languages';
+import { SUPPORTED_LANGUAGES, getLanguageFromFileName, detectRequiresStdin } from '../utils/languages';
 import { openLocalFile, openLocalFolder, saveActiveFileLocally, saveProjectLocally } from '../utils/fileSystem';
 
 interface WorkspaceProps {
@@ -332,7 +332,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
     try {
       const projectFiles = files
         .filter((f) => !f.name.endsWith('.md'))
-        .map((f) => ({ name: f.name, content: f.content }));
+        .map((f) => ({
+          name: f.name,
+          content: f.id === activeFile.id || f.name === activeFile.name ? activeFile.content : f.content,
+        }));
 
       if (!projectFiles.some((f) => f.name === activeFile.name)) {
         projectFiles.unshift({ name: activeFile.name, content: activeFile.content });
@@ -885,6 +888,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             stdin={stdin}
             onStdinChange={(val) => setStdin(val)}
             language={activeFile?.language || 'python'}
+            requiresStdin={detectRequiresStdin(activeFile?.content || '', activeFile?.language || activeFile?.name || '')}
           />
         </div>
 

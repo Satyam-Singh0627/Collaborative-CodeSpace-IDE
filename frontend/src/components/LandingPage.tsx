@@ -16,7 +16,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const { isAuthenticated } = useAuth();
 
   return (
-    <div className="flex-1 flex flex-col bg-[#111215] text-[#eceef2]">
+    <div className="flex-1 flex flex-col bg-[#111215] text-[#eceef2] overflow-y-auto min-h-0">
       {/* Hero Section */}
       <section className="border-b border-[#2b2d35] px-6 py-16 text-center flex flex-col items-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded bg-[#17181c] border border-[#2b2d35] text-[#10b981] text-xs font-mono mb-5">

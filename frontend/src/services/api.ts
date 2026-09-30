@@ -15,39 +15,65 @@ function getAuthHeaders(token?: string | null): HeadersInit {
 export const api = {
   // Auth API
   async register(name: string, email: string, password: string): Promise<{ access_token: string; user: User }> {
-    const res = await fetch(`${API_BASE}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Registration failed');
+    try {
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Registration failed');
+      }
+      return res.json();
+    } catch (err: unknown) {
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        throw new Error('Backend server is temporarily unreachable. Please ensure the backend is running.');
+      }
+      throw err;
     }
-    return res.json();
   },
 
   async login(email: string, password: string): Promise<{ access_token: string; user: User }> {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Login failed');
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Login failed');
+      }
+      return res.json();
+    } catch (err: unknown) {
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        throw new Error('Backend server is temporarily unreachable. Please ensure the backend is running.');
+      }
+      throw err;
     }
-    return res.json();
   },
 
   async getMe(token?: string): Promise<User> {
-    const res = await fetch(`${API_BASE}/auth/me`, {
-      headers: getAuthHeaders(token),
-    });
-    if (!res.ok) {
-      throw new Error('Unauthorized');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        headers: getAuthHeaders(token),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new Error('Unauthorized');
+      }
+      return res.json();
+    } catch (err: unknown) {
+      if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('fetch'))) {
+        throw new Error('Backend server is temporarily unreachable.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
     }
-    return res.json();
   },
 
   // Rooms API — language removed from create (auto-detected per file)

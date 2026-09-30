@@ -173,13 +173,21 @@ def _sanitize_output(text: str, tmp_dir: Optional[str] = None) -> str:
 
     if tmp_dir:
         text = text.replace(tmp_dir + "\\", "").replace(tmp_dir + "/", "").replace(tmp_dir, "")
+        # Also handle unresolved / resolved variants
+        try:
+            resolved_tmp = str(Path(tmp_dir).resolve())
+            text = text.replace(resolved_tmp + "\\", "").replace(resolved_tmp + "/", "").replace(resolved_tmp, "")
+        except Exception:
+            pass
 
-    text = re.sub(r'[A-Za-z]:\\[^ \n\r\t:"<>|]*codespace_[^\\/ \n\r\t:"<>|]*[\\/]', '', text)
-    text = re.sub(r'[A-Za-z]:\\[^ \n\r\t:"<>|]*AppData\\[^ \n\r\t:"<>|]*[\\/]', '', text)
+    # Match Windows & Unix paths containing codespace_ or AppData or /tmp/
+    text = re.sub(r'[A-Za-z]:\\[^\n\r"\'<>|]*?codespace_[a-zA-Z0-9_\-]+[\\/]', '', text)
+    text = re.sub(r'[A-Za-z]:\\[^\n\r"\'<>|]*?AppData\\[^\n\r"\'<>|]*?[\\/]', '', text)
     text = re.sub(r'/tmp/codespace_[^/ \n\r\t:"<>|]*/', '', text)
     text = re.sub(r'/tmp/submission_[^/ \n\r\t:"<>|]*/', '', text)
     text = re.sub(r'/tmp/[a-zA-Z0-9_\-]+/', '', text)
     text = re.sub(r'/usercode/[a-zA-Z0-9_\-]+/', '', text)
+    text = re.sub(r'codespace_[a-zA-Z0-9_\-]+[\\/]', '', text)
 
     return text
 
@@ -263,6 +271,28 @@ class LocalExecutionProvider(ExecutionProvider):
                 env=env,
             )
             elapsed = round(time.time() - start, 3)
+
+            # Check if execution failed due to EOFError (e.g. input() called with empty or exhausted stdin)
+            raw_err = proc.stderr or ""
+            raw_out = proc.stdout or ""
+            is_eof_error = "EOFError: EOF when reading a line" in raw_err or "EOFError" in raw_err
+
+            if proc.returncode != 0 and is_eof_error:
+                clean_prompt = _sanitize_output(raw_out.strip(), tmp_dir=tmp)
+                if not stdin.strip():
+                    graceful_msg = (
+                        f"{clean_prompt}\n\n" if clean_prompt else ""
+                    ) + "[EOFError: Program requested standard input (input()), but no stdin was provided in the 'Input (stdin)' panel. Provide input in the Input tab and run again.]"
+                else:
+                    graceful_msg = (
+                        f"{clean_prompt}\n\n" if clean_prompt else ""
+                    ) + "[EOFError: Program requested additional standard input via input(), but provided stdin was exhausted.]"
+                return CodeRunResponse(
+                    status="error",
+                    output=_truncate(graceful_msg),
+                    execution_time=elapsed,
+                )
+
             raw_output = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
             sanitized = _sanitize_output(raw_output, tmp_dir=tmp)
 
@@ -362,6 +392,24 @@ class PistonExecutionProvider(ExecutionProvider):
                     return CodeRunResponse(
                         status="timeout",
                         output=f"Execution timed out ({TIMEOUT_SECONDS}s limit).",
+                        execution_time=elapsed,
+                    )
+
+                # Graceful EOFError handling in Piston
+                is_eof_error = "EOFError: EOF when reading a line" in (stderr or "") or "EOFError" in (stderr or "")
+                if exit_code != 0 and is_eof_error:
+                    clean_prompt = _sanitize_output(stdout.strip())
+                    if not stdin.strip():
+                        graceful_msg = (
+                            f"{clean_prompt}\n\n" if clean_prompt else ""
+                        ) + "[EOFError: Program requested standard input (input()), but no stdin was provided in the 'Input (stdin)' panel. Provide input in the Input tab and run again.]"
+                    else:
+                        graceful_msg = (
+                            f"{clean_prompt}\n\n" if clean_prompt else ""
+                        ) + "[EOFError: Program requested additional standard input via input(), but provided stdin was exhausted.]"
+                    return CodeRunResponse(
+                        status="error",
+                        output=_truncate(graceful_msg),
                         execution_time=elapsed,
                     )
 
@@ -471,6 +519,24 @@ class Judge0ExecutionProvider(ExecutionProvider):
 
                 is_success = status_id == 3
 
+                # Graceful EOFError handling in Judge0
+                is_eof_error = "EOFError: EOF when reading a line" in (stderr or "") or "EOFError" in (combined or "")
+                if not is_success and is_eof_error:
+                    clean_prompt = _sanitize_output(stdout.strip())
+                    if not stdin.strip():
+                        graceful_msg = (
+                            f"{clean_prompt}\n\n" if clean_prompt else ""
+                        ) + "[EOFError: Program requested standard input (input()), but no stdin was provided in the 'Input (stdin)' panel. Provide input in the Input tab and run again.]"
+                    else:
+                        graceful_msg = (
+                            f"{clean_prompt}\n\n" if clean_prompt else ""
+                        ) + "[EOFError: Program requested additional standard input via input(), but provided stdin was exhausted.]"
+                    return CodeRunResponse(
+                        status="error",
+                        output=_truncate(graceful_msg),
+                        execution_time=elapsed,
+                    )
+
                 return CodeRunResponse(
                     status="success" if is_success else "error",
                     output=_truncate(sanitized.strip()),
@@ -538,27 +604,26 @@ async def execute_code(
 
     entry_file = payload.entry_file or files[0]["name"]
     stdin = payload.stdin or ""
+    if stdin and not stdin.endswith("\n"):
+        stdin = stdin + "\n"
 
     # Provider Resolution Strategy:
-    # 1. If explicit EXECUTION_PROVIDER configured
-    if EXECUTION_PROVIDER == "local":
-        return await local_provider.execute(lang_key, files, entry_file, stdin)
-    elif EXECUTION_PROVIDER == "piston":
+    # 1. If explicit EXECUTION_PROVIDER configured (piston/judge0)
+    if EXECUTION_PROVIDER == "piston":
         return await piston_provider.execute(lang_key, files, entry_file, stdin)
     elif EXECUTION_PROVIDER == "judge0":
         return await judge0_provider.execute(lang_key, files, entry_file, stdin)
 
-    # 2. 'auto' strategy:
-    # - If local runner is available (e.g. Python, Node.js), use local isolated sandbox for ultra-fast response & multi-file imports
+    # 2. Local runner if available (for 'local' or 'auto')
     if _can_run_locally(lang_key):
         try:
             return await local_provider.execute(lang_key, files, entry_file, stdin)
         except Exception as exc:
             logger.warning(f"Local runner failed for {lang_key}: {exc}; falling back to remote sandbox")
 
-    # - Otherwise, use Judge0 / Piston
+    # 3. Remote sandbox fallback (Judge0 -> Piston)
     res = await judge0_provider.execute(lang_key, files, entry_file, stdin)
-    if res.status == "error" and "not supported" in res.output.lower():
+    if res.status == "error" and ("not supported" in res.output.lower() or "not configured" in res.output.lower()):
         return await piston_provider.execute(lang_key, files, entry_file, stdin)
     return res
 

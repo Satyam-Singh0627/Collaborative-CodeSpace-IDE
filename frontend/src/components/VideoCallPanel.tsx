@@ -90,37 +90,40 @@ export const VideoCallPanel: React.FC<VideoCallPanelProps> = ({
         </div>
 
         {/* Media Controls */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           <button
             onClick={onToggleAudio}
             title={isAudioMuted ? 'Unmute Microphone' : 'Mute Microphone'}
-            className={`p-1 rounded border text-xs transition cursor-pointer ${
+            aria-label={isAudioMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+            className={`h-8 w-8 min-w-[32px] flex items-center justify-center rounded border text-xs transition cursor-pointer ${
               isAudioMuted
                 ? 'bg-[#ef4444]/20 border-[#ef4444]/40 text-[#ef4444]'
                 : 'bg-[#1e2026] border-[#2b2d35] text-white hover:bg-[#262830]'
             }`}
           >
-            {isAudioMuted ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+            {isAudioMuted ? <MicOff className="w-[18px] h-[18px]" /> : <Mic className="w-[18px] h-[18px]" />}
           </button>
 
           <button
             onClick={onToggleVideo}
             title={isVideoMuted ? 'Start Camera' : 'Stop Camera'}
-            className={`p-1 rounded border text-xs transition cursor-pointer ${
+            aria-label={isVideoMuted ? 'Start Camera' : 'Stop Camera'}
+            className={`h-8 w-8 min-w-[32px] flex items-center justify-center rounded border text-xs transition cursor-pointer ${
               isVideoMuted
                 ? 'bg-[#ef4444]/20 border-[#ef4444]/40 text-[#ef4444]'
                 : 'bg-[#1e2026] border-[#2b2d35] text-white hover:bg-[#262830]'
             }`}
           >
-            {isVideoMuted ? <VideoOff className="w-3 h-3" /> : <Video className="w-3 h-3" />}
+            {isVideoMuted ? <VideoOff className="w-[18px] h-[18px]" /> : <Video className="w-[18px] h-[18px]" />}
           </button>
 
           <button
             onClick={onLeaveCall}
             title="Leave Call"
-            className="px-2 py-1 bg-[#ef4444] hover:bg-[#dc2626] text-white rounded text-xs font-medium transition flex items-center gap-1 cursor-pointer"
+            aria-label="Leave Call"
+            className="h-8 px-2.5 bg-[#ef4444] hover:bg-[#dc2626] text-white rounded text-xs font-medium transition flex items-center gap-1.5 cursor-pointer shadow-xs"
           >
-            <PhoneOff className="w-3 h-3" />
+            <PhoneOff className="w-4 h-4" />
             <span>Leave</span>
           </button>
         </div>

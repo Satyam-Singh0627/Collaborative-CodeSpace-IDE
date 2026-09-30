@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Copy, Check, Play, Phone, PhoneOff, 
-  ArrowLeft, RefreshCw, Radio, Code2, Save, CloudOff, Cloud, Loader2
+  ArrowLeft, RefreshCw, Radio, Code2, CloudOff, Cloud, Loader2,
+  FolderDown, MessageSquare, AlertCircle, Sparkles
 } from 'lucide-react';
 import type { Room, ProjectFile, ChatMessage, OnlineUser, CursorPosition, ExecutionResult, SyncStatus } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -17,7 +18,7 @@ import { AIAssistantPanel } from './AIAssistantPanel';
 import { VideoCallPanel } from './VideoCallPanel';
 import { OutputPanel } from './OutputPanel';
 import { SUPPORTED_LANGUAGES, getLanguageFromFileName } from '../utils/languages';
-import { openLocalFile, openLocalFolder, saveActiveFileLocally } from '../utils/fileSystem';
+import { openLocalFile, openLocalFolder, saveActiveFileLocally, saveProjectLocally } from '../utils/fileSystem';
 
 interface WorkspaceProps {
   roomCode: string;
@@ -67,6 +68,20 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
 
   // Map to remember local File System Access handles during active session
   const fileHandlesRef = useRef<Map<string, any>>(new Map());
+
+  // Non-blocking toast notification for save actions
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToast({ message, type });
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+    }, 2500);
+  }, []);
 
   // 1. Initial Load: Fetch room, files, messages
   const loadInitialData = useCallback(async () => {
@@ -400,8 +415,35 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
       setActiveFile((prev) =>
         prev && prev.id === target.id ? { ...prev, unsaved: false, fileHandle: res.handle || prev.fileHandle } : prev
       );
+      showToast(res.message, 'success');
+    } else {
+      showToast(res.message, 'error');
     }
-  }, [activeFile]);
+  }, [activeFile, showToast]);
+
+  // Save complete project to local folder
+  const handleSaveProjectLocally = useCallback(async () => {
+    if (files.length === 0) {
+      showToast('No project files to save', 'info');
+      return;
+    }
+
+    const projectName = room?.name || 'Collaborative-CodeSpace';
+    const res = await saveProjectLocally(files, projectName);
+
+    if (res.aborted) {
+      return;
+    }
+
+    if (res.success) {
+      setFiles((prev) => prev.map((f) => ({ ...f, unsaved: false })));
+      setOpenTabs((prev) => prev.map((f) => ({ ...f, unsaved: false })));
+      setActiveFile((prev) => (prev ? { ...prev, unsaved: false } : prev));
+      showToast(res.message, 'success');
+    } else {
+      showToast(res.message, 'error');
+    }
+  }, [files, room?.name, showToast]);
 
   // Global keyboard shortcut: Ctrl/Cmd + S to Save File locally (prevent browser webpage save)
   useEffect(() => {
@@ -497,8 +539,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
         isLocal: true,
         fileHandle: localEntry.handle,
       };
+      if (localEntry.handle) {
+        fileHandlesRef.current.set(enhanced.id, localEntry.handle);
+      }
       setFiles((prev) => [...prev, enhanced]);
       handleSelectFile(enhanced);
+      showToast(`Opened ${localEntry.name}`, 'info');
     } catch {
       // Offline fallback
       const offlineFile: ProjectFile = {
@@ -512,8 +558,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
         isLocal: true,
         fileHandle: localEntry.handle,
       };
+      if (localEntry.handle) {
+        fileHandlesRef.current.set(offlineFile.id, localEntry.handle);
+      }
       setFiles((prev) => [...prev, offlineFile]);
       handleSelectFile(offlineFile);
+      showToast(`Opened ${localEntry.name} (offline)`, 'info');
     }
   };
 
@@ -623,9 +673,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           <button
             onClick={onLeaveRoom}
             title="Leave Workspace"
-            className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
+            aria-label="Leave Workspace"
+            className="h-8 w-8 min-w-[32px] flex items-center justify-center text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-[18px] h-[18px]" />
           </button>
 
           <div className="flex items-center gap-2">
@@ -633,18 +684,19 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             <button
               onClick={copyRoomCode}
               title="Click to copy Room Code"
-              className="px-2 py-0.5 rounded bg-[#111215] hover:bg-[#202227] border border-[#2b2d35] text-[11px] font-mono text-[#10b981] flex items-center gap-1 transition cursor-pointer"
+              aria-label={`Copy room code ${room.room_code}`}
+              className="h-7 px-2.5 rounded bg-[#111215] hover:bg-[#202227] border border-[#2b2d35] text-[11px] font-mono text-[#10b981] flex items-center gap-1.5 transition cursor-pointer"
             >
               <span>{room.room_code}</span>
-              {copiedCode ? <Check className="w-3 h-3 text-[#10b981]" /> : <Copy className="w-3 h-3 text-[#606470]" />}
+              {copiedCode ? <Check className="w-3.5 h-3.5 text-[#10b981]" /> : <Copy className="w-3.5 h-3.5 text-[#606470]" />}
             </button>
           </div>
 
           {/* Read-only language badge (auto-detected) */}
           {activeFile && detectedLang && (
             <div className="hidden sm:flex items-center gap-1.5 pl-2 border-l border-[#2b2d35]">
-              <Code2 className="w-3 h-3 text-[#606470]" />
-              <span className="px-1.5 py-0.5 bg-[#111215] border border-[#2b2d35] rounded text-[10px] font-mono text-[#38bdf8]">
+              <Code2 className="w-3.5 h-3.5 text-[#606470]" />
+              <span className="px-2 py-0.5 bg-[#111215] border border-[#2b2d35] rounded text-[10px] font-mono text-[#38bdf8]">
                 {detectedLang.name}
               </span>
             </div>
@@ -655,19 +707,19 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             <div className="hidden sm:flex items-center gap-1 pl-2 border-l border-[#2b2d35] text-[10px]">
               {syncStatus === 'syncing' && (
                 <span className="flex items-center gap-1 text-[#f59e0b]">
-                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   Syncing…
                 </span>
               )}
               {syncStatus === 'saved' && (
                 <span className="flex items-center gap-1 text-[#10b981]">
-                  <Cloud className="w-3 h-3" />
+                  <Cloud className="w-3.5 h-3.5" />
                   Saved
                 </span>
               )}
               {syncStatus === 'error' && (
                 <span className="flex items-center gap-1 text-[#ef4444]">
-                  <CloudOff className="w-3 h-3" />
+                  <CloudOff className="w-3.5 h-3.5" />
                   Sync Error
                 </span>
               )}
@@ -677,8 +729,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
 
         {/* Center: Live Presence */}
         <div className="hidden md:flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#111215] border border-[#2b2d35] text-[11px]">
-            <Radio className="w-2.5 h-2.5 text-[#10b981] animate-pulse" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#111215] border border-[#2b2d35] text-[11px]">
+            <Radio className="w-3 h-3 text-[#10b981] animate-pulse" />
             <span className="text-[#10b981] font-semibold">{onlineUsers.length} Online:</span>
             <span className="text-[#eceef2] truncate max-w-[280px]">
               {onlineUsers.map((u) => (u.user_id === user?.id ? `${u.name || 'You'} (You)` : u.name)).join(', ')}
@@ -692,48 +744,56 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           <div className="flex items-center gap-1 text-[11px]">
             {connStatus === 'connected' ? (
               <span className="flex items-center gap-1 text-[#10b981]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]"></span>
+                <span className="w-2 h-2 rounded-full bg-[#10b981]"></span>
                 Connected
               </span>
             ) : connStatus === 'reconnecting' ? (
               <span className="flex items-center gap-1 text-[#f59e0b]">
-                <RefreshCw className="w-3 h-3 animate-spin" />
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 Reconnecting…
               </span>
             ) : connStatus === 'connecting' ? (
               <span className="flex items-center gap-1 text-[#f59e0b]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#f59e0b] animate-pulse"></span>
+                <span className="w-2 h-2 rounded-full bg-[#f59e0b] animate-pulse"></span>
                 Connecting…
               </span>
             ) : (
               <span className="flex items-center gap-1 text-[#ef4444]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#ef4444]"></span>
+                <span className="w-2 h-2 rounded-full bg-[#ef4444]"></span>
                 Offline
               </span>
             )}
           </div>
 
-          {/* Save Button */}
-          {activeFile && (
-            <button
-              onClick={() => handleSaveActiveFileLocally(activeFile)}
-              title="Save changes (Ctrl+S)"
-              className="p-1 text-[#9a9ea8] hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
-            >
-              <Save className="w-3.5 h-3.5" />
-            </button>
-          )}
+          {/* Top Bar: Save Project Button */}
+          <button
+            onClick={handleSaveProjectLocally}
+            title="Save Project (Save all files to local folder)"
+            aria-label="Save Project to Local Folder"
+            className="h-8 px-2.5 bg-[#17181c] hover:bg-[#202227] text-[#eceef2] border border-[#2b2d35] hover:border-[#38bdf8]/40 rounded text-xs font-medium flex items-center gap-1.5 transition cursor-pointer relative shadow-xs"
+          >
+            <FolderDown className="w-4 h-4 text-[#38bdf8]" />
+            <span className="hidden sm:inline">Save Project</span>
+            {files.some((f) => f.unsaved) && (
+              <span
+                className="w-2 h-2 rounded-full bg-[#f59e0b] animate-pulse shrink-0"
+                title="Project has unsaved changes"
+                aria-label="Project has unsaved changes"
+              />
+            )}
+          </button>
 
           {/* Quick Call Button */}
           <button
             onClick={inCall ? handleLeaveCall : handleJoinCall}
-            className={`px-2.5 py-1 rounded text-xs font-medium flex items-center gap-1.5 transition cursor-pointer ${
+            aria-label={inCall ? 'End Call' : 'Start Call'}
+            className={`h-8 px-2.5 rounded text-xs font-medium flex items-center gap-1.5 transition cursor-pointer ${
               inCall
-                ? 'bg-[#ef4444] hover:bg-[#dc2626] text-white'
+                ? 'bg-[#ef4444] hover:bg-[#dc2626] text-white shadow-xs'
                 : 'bg-[#202227] hover:bg-[#262830] text-white border border-[#2b2d35]'
             }`}
           >
-            {inCall ? <PhoneOff className="w-3 h-3" /> : <Phone className="w-3 h-3 text-[#10b981]" />}
+            {inCall ? <PhoneOff className="w-4 h-4" /> : <Phone className="w-4 h-4 text-[#10b981]" />}
             <span>{inCall ? 'End Call' : 'Call'}</span>
           </button>
 
@@ -742,9 +802,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
             onClick={handleRunCode}
             disabled={isRunning || !activeFile}
             title="Execute Code in Sandbox (Ctrl+Enter)"
-            className="px-3 py-1 bg-[#10b981] hover:bg-[#059669] text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
+            aria-label="Execute Code in Sandbox (Ctrl+Enter)"
+            className="h-8 px-3.5 bg-[#10b981] hover:bg-[#059669] text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
           >
-            <Play className={`w-3 h-3 fill-current ${isRunning ? 'animate-pulse' : ''}`} />
+            <Play className={`w-4 h-4 fill-current ${isRunning ? 'animate-pulse' : ''}`} />
             <span>{isRunning ? 'Running…' : 'Run'}</span>
           </button>
         </div>
@@ -811,22 +872,26 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           <div className="flex border-b border-[#2b2d35] bg-[#111215] text-xs shrink-0">
             <button
               onClick={() => setActiveRightTab('ai')}
-              className={`flex-1 py-1.5 flex items-center justify-center gap-1.5 font-medium transition cursor-pointer ${
+              aria-label="Switch to AI Assistant"
+              className={`flex-1 h-9 flex items-center justify-center gap-1.5 font-medium transition cursor-pointer ${
                 activeRightTab === 'ai'
                   ? 'text-[#8b5cf6] border-b-2 border-[#8b5cf6] bg-[#17181c]'
                   : 'text-[#9a9ea8] hover:text-white'
               }`}
             >
+              <Sparkles className="w-4 h-4 text-[#8b5cf6]" />
               <span>AI Assistant</span>
             </button>
             <button
               onClick={() => setActiveRightTab('chat')}
-              className={`flex-1 py-1.5 flex items-center justify-center gap-1.5 font-medium transition cursor-pointer ${
+              aria-label="Switch to Room Chat"
+              className={`flex-1 h-9 flex items-center justify-center gap-1.5 font-medium transition cursor-pointer ${
                 activeRightTab === 'chat'
                   ? 'text-[#10b981] border-b-2 border-[#10b981] bg-[#17181c]'
                   : 'text-[#9a9ea8] hover:text-white'
               }`}
             >
+              <MessageSquare className="w-4 h-4 text-[#10b981]" />
               <span>Chat</span>
             </button>
           </div>
@@ -853,6 +918,20 @@ export const Workspace: React.FC<WorkspaceProps> = ({ roomCode, onLeaveRoom }) =
           </div>
         </div>
       </div>
+
+      {/* Non-blocking Save Status Toast */}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-2.5 bg-[#17181c] border border-[#2b2d35] text-white text-xs font-medium rounded-lg shadow-xl shadow-black/50 pointer-events-none"
+        >
+          {toast.type === 'success' && <Check className="w-4 h-4 text-[#10b981]" />}
+          {toast.type === 'error' && <AlertCircle className="w-4 h-4 text-[#ef4444]" />}
+          {toast.type === 'info' && <FolderDown className="w-4 h-4 text-[#38bdf8]" />}
+          <span>{toast.message}</span>
+        </div>
+      )}
     </div>
   );
 };

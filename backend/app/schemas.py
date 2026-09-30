@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # User Schemas
 class UserRegister(BaseModel):
@@ -17,9 +17,7 @@ class UserResponse(BaseModel):
     name: str
     email: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -46,9 +44,7 @@ class RoomResponse(BaseModel):
     created_at: datetime
     member_count: Optional[int] = 0
     members: Optional[List[RoomMemberResponse]] = []
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class RoomJoin(BaseModel):
     room_code: str = Field(..., min_length=4, max_length=20)
@@ -73,9 +69,7 @@ class FileResponse(BaseModel):
     content: str
     version: int
     updated_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Message Schemas
 class MessageCreate(BaseModel):
@@ -88,9 +82,7 @@ class MessageResponse(BaseModel):
     sender_name: str
     message: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Code Execution Schemas
 class ProjectFilePayload(BaseModel):

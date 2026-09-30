@@ -14,19 +14,22 @@
  */
 export function getApiBaseUrl(): string {
   const envUrl = (import.meta.env.VITE_API_URL || '').trim();
-  if (!envUrl) {
-    return '/api';
+  if (envUrl) {
+    const clean = envUrl.replace(/\/+$/, '');
+    return clean.endsWith('/api') ? clean : `${clean}/api`;
   }
-  const clean = envUrl.replace(/\/+$/, '');
-  return clean.endsWith('/api') ? clean : `${clean}/api`;
+  // Production fallback when hosted on Vercel or external domain
+  if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || !window.location.hostname.includes('localhost'))) {
+    return 'https://collaborative-codespace-ide.onrender.com/api';
+  }
+  return '/api';
 }
 
 /**
  * Resolves the WebSocket URL for real-time collaboration.
- * - If VITE_WS_URL is set (e.g., "wss://collaborative-codespace-backend.onrender.com"):
- *   connects directly to the specified WebSocket host.
- * - If VITE_API_URL is set (e.g., "https://collaborative-codespace-backend.onrender.com"):
- *   automatically converts http(s) -> ws(s) and connects to /ws/<roomCode>?token=<token>.
+ * - If VITE_WS_URL is set: connects directly to specified WebSocket host.
+ * - If VITE_API_URL is set: converts http(s) -> ws(s).
+ * - When hosted on Vercel: falls back to production Render wss:// endpoint.
  * - Otherwise falls back to window.location (for local development with Vite dev server proxy).
  */
 export function getWebSocketUrl(roomCode: string, token: string): string {
@@ -50,6 +53,11 @@ export function getWebSocketUrl(roomCode: string, token: string): string {
       .replace(/^http:\/\//i, 'ws://')
       .replace(/^https:\/\//i, 'wss://');
     return `${wsBase}${path}`;
+  }
+
+  // Production fallback when hosted on Vercel or non-localhost
+  if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || !window.location.hostname.includes('localhost'))) {
+    return `wss://collaborative-codespace-ide.onrender.com${path}`;
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

@@ -18,48 +18,55 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_tables = inspector.get_table_names()
+
     # 1. users table
-    op.create_table(
-        'users',
-        sa.Column('id', sa.String(length=36), nullable=False),
-        sa.Column('name', sa.String(length=100), nullable=False),
-        sa.Column('email', sa.String(length=255), nullable=False),
-        sa.Column('password_hash', sa.String(length=255), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index('ix_users_email', 'users', ['email'], unique=True)
+    if 'users' not in existing_tables:
+        op.create_table(
+            'users',
+            sa.Column('id', sa.String(length=36), nullable=False),
+            sa.Column('name', sa.String(length=100), nullable=False),
+            sa.Column('email', sa.String(length=255), nullable=False),
+            sa.Column('password_hash', sa.String(length=255), nullable=False),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
+            sa.PrimaryKeyConstraint('id')
+        )
+        op.create_index('ix_users_email', 'users', ['email'], unique=True)
 
     # 2. rooms table
-    op.create_table(
-        'rooms',
-        sa.Column('id', sa.String(length=36), nullable=False),
-        sa.Column('room_code', sa.String(length=20), nullable=False),
-        sa.Column('name', sa.String(length=100), nullable=False),
-        sa.Column('owner_id', sa.String(length=36), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(['owner_id'], ['users.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index('ix_rooms_room_code', 'rooms', ['room_code'], unique=True)
-    op.create_index('ix_rooms_owner_id', 'rooms', ['owner_id'], unique=False)
+    if 'rooms' not in existing_tables:
+        op.create_table(
+            'rooms',
+            sa.Column('id', sa.String(length=36), nullable=False),
+            sa.Column('room_code', sa.String(length=20), nullable=False),
+            sa.Column('name', sa.String(length=100), nullable=False),
+            sa.Column('owner_id', sa.String(length=36), nullable=False),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(['owner_id'], ['users.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id')
+        )
+        op.create_index('ix_rooms_room_code', 'rooms', ['room_code'], unique=True)
+        op.create_index('ix_rooms_owner_id', 'rooms', ['owner_id'], unique=False)
 
     # 3. room_members table
-    op.create_table(
-        'room_members',
-        sa.Column('id', sa.String(length=36), nullable=False),
-        sa.Column('room_id', sa.String(length=36), nullable=False),
-        sa.Column('user_id', sa.String(length=36), nullable=False),
-        sa.Column('role', sa.String(length=20), server_default='member', nullable=True),
-        sa.Column('joined_at', sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(['room_id'], ['rooms.id'], ondelete='CASCADE'),
-        sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('room_id', 'user_id', name='uq_room_members_room_user')
-    )
-    op.create_index('ix_room_members_room_id', 'room_members', ['room_id'], unique=False)
-    op.create_index('ix_room_members_user_id', 'room_members', ['user_id'], unique=False)
-    op.create_index('ix_room_members_room_user', 'room_members', ['room_id', 'user_id'], unique=True)
+    if 'room_members' not in existing_tables:
+        op.create_table(
+            'room_members',
+            sa.Column('id', sa.String(length=36), nullable=False),
+            sa.Column('room_id', sa.String(length=36), nullable=False),
+            sa.Column('user_id', sa.String(length=36), nullable=False),
+            sa.Column('role', sa.String(length=20), server_default='member', nullable=True),
+            sa.Column('joined_at', sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(['room_id'], ['rooms.id'], ondelete='CASCADE'),
+            sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('room_id', 'user_id', name='uq_room_members_room_user')
+        )
+        op.create_index('ix_room_members_room_id', 'room_members', ['room_id'], unique=False)
+        op.create_index('ix_room_members_user_id', 'room_members', ['user_id'], unique=False)
+        op.create_index('ix_room_members_room_user', 'room_members', ['room_id', 'user_id'], unique=True)
 
 
 def downgrade() -> None:

@@ -1,19 +1,48 @@
-from fastapi import FastAPI
+import logging
+from pathlib import Path
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .config import ALLOWED_ORIGINS, ENVIRONMENT, DATABASE_URL
-from .database import engine, Base
 from .routers import auth, rooms, ws, execution, ai
 
-# In development with local SQLite fallback, ensure initial tables exist if not already migrated.
-# In production (PostgreSQL), schema is strictly managed via Alembic migrations.
-if DATABASE_URL.startswith("sqlite"):
-    Base.metadata.create_all(bind=engine)
+logger = logging.getLogger("main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Ensure Alembic migrations are applied (both PostgreSQL production and SQLite local)
+    try:
+        from alembic.config import Config
+        from alembic import command
+        backend_dir = Path(__file__).resolve().parent.parent
+        ini_path = backend_dir / "alembic.ini"
+        if ini_path.exists():
+            alembic_cfg = Config(str(ini_path))
+            alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+            command.upgrade(alembic_cfg, "head")
+            logger.info("Alembic upgrade head executed successfully on startup.")
+    except Exception as exc:
+        logger.error("Alembic startup migration error: %s", exc, exc_info=True)
+    yield
+
 
 app = FastAPI(
     title="Collaborative CodeSpace API",
     description="Real-Time Collaborative Code Editor & Collaboration Room API",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan,
 )
+
+# Global unhandled exception handler for detailed logging
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error. Check server logs for details."}
+    )
 
 # Configure CORS
 # Uses explicit allowed origins with credential support (no wildcard '*'), plus matches Vercel domains

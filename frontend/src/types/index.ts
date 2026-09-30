@@ -37,6 +37,9 @@ export interface ProjectFile {
   language: string;
   content: string;
   updated_at: string;
+  isLocal?: boolean;
+  unsaved?: boolean;
+  fileHandle?: any;
 }
 
 export interface ChatMessage {
@@ -63,7 +66,26 @@ export interface CursorPosition {
 }
 
 export interface ExecutionResult {
-  status: 'idle' | 'running' | 'success' | 'error' | 'timeout';
+  status: 'idle' | 'running' | 'success' | 'error' | 'timeout' | 'compile_error';
   output: string;
   execution_time?: number;
+  runtime_provider?: string;
+}
+
+export interface AIChatTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  modelUsed?: string;
+  action?: string;
+  isError?: boolean;
+}
+
+export interface LanguageInfo {
+  key: string;
+  name: string;
+  ext: string;
+  monacoLang: string;
+  entry_default: string;
 }

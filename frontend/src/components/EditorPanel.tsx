@@ -1,27 +1,44 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
 import type { OnMount, OnChange } from '@monaco-editor/react';
-import { Code2, Users } from 'lucide-react';
+import {
+  Code2,
+  Users,
+  X,
+  FileCode,
+  FileText,
+  Search,
+  WrapText,
+  Map,
+  Save,
+} from 'lucide-react';
 import type { ProjectFile, CursorPosition } from '../types';
 import { api } from '../services/api';
+import { getMonacoLanguage } from '../utils/languages';
 
 interface EditorPanelProps {
   files: ProjectFile[];
   activeFile: ProjectFile | null;
+  openTabs: ProjectFile[];
   onSelectFile: (file: ProjectFile) => void;
+  onCloseTab: (fileId: string) => void;
   onCodeChange: (fileId: string, content: string) => void;
   onCursorMove: (fileId: string, cursor: { lineNumber: number; column: number }) => void;
   onSelectionChange: (selectedText: string) => void;
+  onSaveFile?: (file: ProjectFile) => void;
   remoteCursors: CursorPosition[];
 }
 
 export const EditorPanel: React.FC<EditorPanelProps> = ({
   files,
   activeFile,
+  openTabs,
   onSelectFile,
+  onCloseTab,
   onCodeChange,
   onCursorMove,
   onSelectionChange,
+  onSaveFile,
   remoteCursors,
 }) => {
   const editorRef = useRef<any>(null);
@@ -31,42 +48,13 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   const debounceTimerRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Map file names to Monaco language identifiers
-  const getLanguage = (fileName?: string) => {
-    if (!fileName) return 'python';
-    const ext = fileName.split('.').pop()?.toLowerCase();
-    const map: Record<string, string> = {
-      py: 'python',
-      js: 'javascript',
-      jsx: 'javascript',
-      ts: 'typescript',
-      tsx: 'typescript',
-      c: 'c',
-      h: 'c',
-      cpp: 'cpp',
-      cc: 'cpp',
-      hpp: 'cpp',
-      java: 'java',
-      go: 'go',
-      rs: 'rust',
-      rb: 'ruby',
-      php: 'php',
-      cs: 'csharp',
-      kt: 'kotlin',
-      sh: 'shell',
-      bash: 'shell',
-      md: 'markdown',
-      json: 'json',
-      html: 'html',
-      css: 'css',
-      sql: 'sql',
-      yaml: 'yaml',
-      yml: 'yaml',
-    };
-    return map[ext || ''] || 'plaintext';
-  };
+  // Editor configuration toggles
+  const [wordWrap, setWordWrap] = useState<'on' | 'off'>('on');
+  const [minimap, setMinimap] = useState<boolean>(false);
+  const [showQuickOpen, setShowQuickOpen] = useState<boolean>(false);
+  const [quickSearch, setQuickSearch] = useState<string>('');
 
-  // Register dynamic AI inline completion provider
+  // Register dynamic Monaco AI inline completions provider
   const registerCompletionProvider = useCallback((monaco: any) => {
     if (completionDisposableRef.current) {
       completionDisposableRef.current.dispose();
@@ -102,18 +90,18 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             });
 
             // Minimum length check
-            if (codeBefore.trim().length < 8) {
+            if (codeBefore.trim().length < 6) {
               resolve({ items: [] });
               return;
             }
 
-            const language = getLanguage(activeFile?.name);
+            const language = getMonacoLanguage(activeFile?.name || 'py');
 
             try {
               abortControllerRef.current = new AbortController();
               const result = await api.aiComplete(
-                codeBefore.slice(-2500),
-                codeAfter.slice(0, 1000),
+                codeBefore.slice(-3000),
+                codeAfter.slice(0, 1200),
                 language,
                 activeFile?.name || '',
               );
@@ -139,7 +127,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             } catch {
               resolve({ items: [] });
             }
-          }, 500); // 500ms debounce
+          }, 450); // 450ms debounce
         });
       },
       freeInlineCompletions: () => {},
@@ -150,7 +138,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     editorRef.current = editor;
     monacoRef.current = monaco;
 
-    // Track cursor positions
+    // Track cursor movements for collaboration
     editor.onDidChangeCursorPosition((e) => {
       if (activeFile) {
         onCursorMove(activeFile.id, {
@@ -160,7 +148,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
       }
     });
 
-    // Track selection changes for contextual AI
+    // Track text selection for contextual AI
     editor.onDidChangeCursorSelection((e) => {
       const model = editor.getModel();
       if (model) {
@@ -169,32 +157,49 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
       }
     });
 
-    // Professional Neutral Graphite IDE Monaco Theme
+    // Professional Dark Graphite IDE Theme
     monaco.editor.defineTheme('ide-graphite', {
       base: 'vs-dark',
       inherit: true,
       rules: [
-        { token: 'comment', foreground: '5c6370', fontStyle: 'italic' },
-        { token: 'keyword', foreground: 'c678dd' },
+        { token: 'comment', foreground: '626978', fontStyle: 'italic' },
+        { token: 'keyword', foreground: 'c678dd', fontStyle: 'bold' },
         { token: 'string', foreground: '98c379' },
         { token: 'number', foreground: 'd19a66' },
         { token: 'type', foreground: 'e5c07b' },
         { token: 'function', foreground: '61afef' },
         { token: 'variable', foreground: 'abb2bf' },
+        { token: 'operator', foreground: '56b6c2' },
       ],
       colors: {
         'editor.background': '#111215',
-        'editor.lineHighlightBackground': '#18191d',
+        'editor.foreground': '#eceef2',
+        'editor.lineHighlightBackground': '#18191e',
         'editorLineNumber.foreground': '#4b505c',
         'editorLineNumber.activeForeground': '#eceef2',
         'editorCursor.foreground': '#10b981',
-        'editor.selectionBackground': '#2b3445',
-        'editor.inactiveSelectionBackground': '#1e2533',
+        'editor.selectionBackground': '#263345',
+        'editor.inactiveSelectionBackground': '#1a222e',
         'editorIndentGuide.background': '#1e2026',
-        'editorIndentGuide.activeBackground': '#2e313b',
+        'editorIndentGuide.activeBackground': '#30343f',
+        'editorBracketMatch.background': '#283142',
+        'editorBracketMatch.border': '#38bdf8',
+        'editorGutter.background': '#111215',
       },
     });
     monaco.editor.setTheme('ide-graphite');
+
+    // Add Ctrl+S Save command
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      if (activeFile && onSaveFile) {
+        onSaveFile(activeFile);
+      }
+    });
+
+    // Add Ctrl+P Quick Open command
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => {
+      setShowQuickOpen(true);
+    });
 
     registerCompletionProvider(monaco);
   };
@@ -209,7 +214,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     }
   };
 
-  // Sync external remote code update without moving user cursor
+  // Sync external remote updates without losing cursor position
   useEffect(() => {
     if (!editorRef.current || !activeFile) return;
     const currentVal = editorRef.current.getValue();
@@ -223,6 +228,21 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     }
   }, [activeFile?.content]);
 
+  // Global keyboard shortcut for Quick Open (Ctrl+P / Cmd+P)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setShowQuickOpen((prev) => !prev);
+      }
+      if (e.key === 'Escape' && showQuickOpen) {
+        setShowQuickOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showQuickOpen]);
+
   useEffect(() => {
     return () => {
       if (completionDisposableRef.current) {
@@ -234,36 +254,109 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     };
   }, []);
 
+  const getTabIcon = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    if (['py', 'pyw', 'c', 'cpp', 'java', 'go', 'rs', 'php', 'rb', 'cs', 'kt', 'sh'].includes(ext)) {
+      return <Code2 className="w-3 h-3 text-[#10b981]" />;
+    }
+    if (['js', 'jsx', 'ts', 'tsx', 'html', 'css'].includes(ext)) {
+      return <FileCode className="w-3 h-3 text-[#fbbf24]" />;
+    }
+    return <FileText className="w-3 h-3 text-[#9a9ea8]" />;
+  };
+
+  const filteredQuickFiles = files.filter((f) =>
+    f.name.toLowerCase().includes(quickSearch.toLowerCase())
+  );
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#111215] overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-[#111215] overflow-hidden relative">
       {/* File Tabs Bar */}
-      <div className="h-8 bg-[#17181c] border-b border-[#2b2d35] flex items-center overflow-x-auto select-none px-2 gap-1">
-        {files.map((file) => {
-          const isActive = file.id === activeFile?.id;
-          return (
-            <div
-              key={file.id}
-              onClick={() => onSelectFile(file)}
-              className={`h-6 px-3 flex items-center gap-1.5 rounded-t text-xs font-mono border-t border-x cursor-pointer transition ${
-                isActive
-                  ? 'bg-[#111215] text-white border-[#2b2d35] border-b-[#111215] font-medium'
-                  : 'bg-[#17181c] text-[#9a9ea8] border-transparent hover:text-white hover:bg-[#1e2026]'
-              }`}
+      <div className="h-8 bg-[#17181c] border-b border-[#2b2d35] flex items-center justify-between overflow-x-auto select-none px-2 gap-1">
+        <div className="flex items-center gap-1 overflow-x-auto">
+          {openTabs.map((file) => {
+            const isActive = file.id === activeFile?.id;
+            return (
+              <div
+                key={file.id}
+                onClick={() => onSelectFile(file)}
+                className={`group h-6 px-2.5 flex items-center gap-1.5 rounded-t text-xs font-mono border-t border-x cursor-pointer transition ${
+                  isActive
+                    ? 'bg-[#111215] text-white border-[#2b2d35] border-b-[#111215] font-medium'
+                    : 'bg-[#17181c] text-[#9a9ea8] border-transparent hover:text-white hover:bg-[#1e2026]'
+                }`}
+              >
+                {getTabIcon(file.name)}
+                <span className="text-[11px] truncate max-w-[140px]">{file.name}</span>
+                {file.unsaved && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] group-hover:hidden"></span>
+                )}
+                {openTabs.length > 1 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseTab(file.id);
+                    }}
+                    title="Close tab"
+                    className="p-0.5 text-[#606470] hover:text-white hover:bg-[#2b2d35] rounded transition opacity-0 group-hover:opacity-100 cursor-pointer"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Editor Controls Bar */}
+        <div className="flex items-center gap-1 px-1 text-[#9a9ea8]">
+          {activeFile && onSaveFile && (
+            <button
+              onClick={() => onSaveFile(activeFile)}
+              title="Save File (Ctrl+S)"
+              className="p-1 hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
             >
-              <Code2 className="w-3 h-3 text-[#10b981]" />
-              <span className="text-[11px]">{file.name}</span>
-            </div>
-          );
-        })}
+              <Save className="w-3.5 h-3.5 text-[#10b981]" />
+            </button>
+          )}
+
+          <button
+            onClick={() => setWordWrap((prev) => (prev === 'on' ? 'off' : 'on'))}
+            title={`Word Wrap: ${wordWrap}`}
+            className={`p-1 rounded transition cursor-pointer ${
+              wordWrap === 'on' ? 'text-[#10b981] bg-[#1e2026]' : 'hover:text-white hover:bg-[#202227]'
+            }`}
+          >
+            <WrapText className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={() => setMinimap((prev) => !prev)}
+            title={`Minimap: ${minimap ? 'Enabled' : 'Disabled'}`}
+            className={`p-1 rounded transition cursor-pointer ${
+              minimap ? 'text-[#10b981] bg-[#1e2026]' : 'hover:text-white hover:bg-[#202227]'
+            }`}
+          >
+            <Map className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={() => setShowQuickOpen(true)}
+            title="Quick Open File (Ctrl+P)"
+            className="p-1 hover:text-white hover:bg-[#202227] rounded transition cursor-pointer"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Editor Surface & Presence Overlay */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative overflow-hidden">
         {remoteCursors.length > 0 && (
           <div className="absolute top-2 right-4 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#17181c]/95 border border-[#2b2d35] text-[11px] text-[#9a9ea8] shadow-md">
             <Users className="w-3.5 h-3.5 text-[#10b981]" />
             <span>
-              {remoteCursors.map((c) => `${c.user_name} (L:${c.cursor.lineNumber})`).join(', ')}
+              {remoteCursors.map((c) => `${c.user_name} (Line ${c.cursor.lineNumber})`).join(', ')}
             </span>
           </div>
         )}
@@ -271,15 +364,15 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         {activeFile ? (
           <Editor
             height="100%"
-            language={getLanguage(activeFile.name)}
+            language={getMonacoLanguage(activeFile.name)}
             value={activeFile.content}
             theme="ide-graphite"
             onChange={handleContentChange}
             onMount={handleEditorDidMount}
             options={{
-              minimap: { enabled: false },
+              minimap: { enabled: minimap },
               fontSize: 13,
-              fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, monospace",
+              fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, 'Courier New', monospace",
               fontLigatures: true,
               scrollBeyondLastLine: false,
               automaticLayout: true,
@@ -288,19 +381,76 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
               cursorSmoothCaretAnimation: 'on',
               lineNumbers: 'on',
               renderLineHighlight: 'all',
+              wordWrap: wordWrap,
+              autoClosingBrackets: 'always',
+              autoClosingQuotes: 'always',
+              autoSurround: 'languageDefined',
+              folding: true,
+              foldingHighlight: true,
+              matchBrackets: 'always',
               inlineSuggest: { enabled: true, mode: 'subwordSmart' },
               quickSuggestions: true,
               suggestOnTriggerCharacters: true,
               acceptSuggestionOnEnter: 'smart',
               tabCompletion: 'on',
+              smoothScrolling: true,
             }}
           />
         ) : (
-          <div className="flex-1 flex items-center justify-center text-xs text-[#606470]">
-            Select or create a file in the explorer to start editing
+          <div className="flex-1 flex flex-col items-center justify-center text-xs text-[#606470] h-full">
+            <Code2 className="w-8 h-8 stroke-1 text-[#2b2d35] mb-2" />
+            <span>Select or create a file in the explorer to start editing</span>
           </div>
         )}
       </div>
+
+      {/* Quick Open Modal (Ctrl+P) */}
+      {showQuickOpen && (
+        <div
+          onClick={() => setShowQuickOpen(false)}
+          className="absolute inset-0 bg-black/50 z-50 flex items-start justify-center pt-16"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-[#17181c] border border-[#2b2d35] rounded-lg shadow-2xl overflow-hidden"
+          >
+            <div className="p-2.5 border-b border-[#2b2d35] flex items-center gap-2 bg-[#111215]">
+              <Search className="w-4 h-4 text-[#9a9ea8]" />
+              <input
+                type="text"
+                autoFocus
+                placeholder="Type file name to open..."
+                value={quickSearch}
+                onChange={(e) => setQuickSearch(e.target.value)}
+                className="w-full bg-transparent text-xs text-white placeholder-[#606470] focus:outline-hidden"
+              />
+              <span className="text-[10px] text-[#606470] font-mono border border-[#2b2d35] px-1.5 py-0.5 rounded">
+                ESC
+              </span>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto p-1.5 space-y-0.5">
+              {filteredQuickFiles.map((file) => (
+                <div
+                  key={file.id}
+                  onClick={() => {
+                    onSelectFile(file);
+                    setShowQuickOpen(false);
+                    setQuickSearch('');
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-[#202227] text-xs font-mono text-[#eceef2] cursor-pointer"
+                >
+                  {getTabIcon(file.name)}
+                  <span className="truncate">{file.name}</span>
+                </div>
+              ))}
+              {filteredQuickFiles.length === 0 && (
+                <div className="p-3 text-center text-xs text-[#606470]">No matching files found</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
